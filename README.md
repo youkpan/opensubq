@@ -51,6 +51,19 @@ file-chat.exe
 
 See [Architecture](./wiki2/Architecture-file-chat.md) and [PRD](./wiki2/PRD-file-chat.md) for details.
 
+**Usage (NextChat):**
+1. Start backend: double-click `file-chat/start-with-key-pan.bat`
+2. Start NextChat: double-click `scripts/start-nextchat.bat`
+3. Open http://localhost:3000, go to Settings:
+   - Custom API endpoint: `http://localhost:8080`
+   - API Key: your DeepSeek API Key
+   - Model: `deepseek-v4-flash`, select **deepseek-chat** as provider
+4. New chat, type `@absolute\path\to\file.txt` + your question, send
+
+**Screenshot:**
+
+![Screenshot](./ScreenShot.png)
+
 ---
 
 ### 2. CRBSA — Codebook-Routed Block-Sparse Attention

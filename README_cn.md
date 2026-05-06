@@ -51,6 +51,19 @@ file-chat.exe
 
 详见 [技术架构](./wiki2/Architecture-file-chat.md) 和 [PRD](./wiki2/PRD-file-chat.md)。
 
+**使用方法（NextChat）：**
+1. 启动后端：双击 `file-chat/start-with-key-pan.bat`
+2. 启动前端：双击 `scripts/start-nextchat.bat`
+3. 打开 http://localhost:3000，进入设置：
+   - 自定义接口地址：`http://localhost:8080`
+   - API Key：填写你的 DeepSeek API Key
+   - 模型名称：`deepseek-v4-flash`，模型提供商选择 **deepseek-chat**
+4. 新建对话，输入 `@文件绝对路径\文件名` + 你的提示词，发送即可
+
+**截图：**
+
+![截图](./ScreenShot.png)
+
 ---
 
 ### 2. CRBSA — 基于密码本路由的块稀疏注意力

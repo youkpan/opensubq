@@ -8,9 +8,16 @@ import (
 	"file-chat/handler"
 )
 
-// corsMiddleware adds CORS headers and request logging
+// corsMiddleware adds CORS headers, request logging and panic recovery
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("[PANIC] %s %s: %v", r.Method, r.URL.Path, err)
+				http.Error(w, `{"error":true,"message":"internal server error"}`, http.StatusInternalServerError)
+			}
+		}()
+
 		log.Printf("[REQUEST] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
