@@ -7,20 +7,25 @@ import (
 	"strings"
 )
 
-var pathPattern = regexp.MustCompile(`@(/?\S+)`)
+// Matches: @/abs/path, @C:\path, @.\rel, @..\rel, @folder/file.ext
+var pathPattern = regexp.MustCompile(`@((?:[A-Za-z]:[\\/]|[.]{0,2}[\\/])\S+|\S+[\\/]\S+)`)
 
 const AllFilesMarker = "@全部"
 
 // ExtractPaths extracts @path references from message content.
 // Returns (paths, hasAll) where hasAll indicates @全部 was used.
 func ExtractPaths(content string) ([]string, bool) {
+	// Remove @全部 first so it doesn't interfere with path matching
+	cleaned := strings.ReplaceAll(content, AllFilesMarker, "")
 	hasAll := strings.Contains(content, AllFilesMarker)
-	matches := pathPattern.FindAllStringSubmatch(content, -1)
+
+	matches := pathPattern.FindAllStringSubmatch(cleaned, -1)
 	seen := make(map[string]bool)
 	var paths []string
 	for _, m := range matches {
 		p := m[1]
-		if p == "全部" { // @全部 matched as @/全部, skip
+		// Skip Chinese-only strings (not file paths)
+		if !strings.ContainsAny(p, "/\\.:") {
 			continue
 		}
 		if !seen[p] {
