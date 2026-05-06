@@ -1,17 +1,68 @@
-# CRBSA: Codebook-Routed Block-Sparse Attention
+# SubQ
+
+[中文](./README_cn.md)
+
+A collection of long-context and intelligent Q&A projects.
+
+---
+
+## Projects
+
+### 1. File-Chat — Long-Document Intelligent Q&A System
+
+[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://go.dev/)
+[![OpenAI Compatible](https://img.shields.io/badge/API-OpenAI_Compatible-green.svg)]()
+
+A Go-based long-text intelligent Q&A system using **Context Engineering** with DeepSeek LLM. Provides an OpenAI-compatible API for seamless integration with chat frontends like NextChat.
+
+**Key Features:**
+- LLM-based semantic chunking — auto-splits long documents into meaningful chunks with summaries
+- Two-level retrieval: file summaries → chunk outlines → top-K chunks
+- `@path` to reference specific files, `@全部` to search all indexed files
+- File change detection (size → modTime → MD5 hash) avoids reprocessing
+- Parallel processing: 20 concurrent goroutines, 30KB segments per worker
+- SSE streaming via OpenAI-compatible `/v1/chat/completions` API
+- Supports PDF, Excel, Word, etc. via markitdown conversion
+
+**Architecture:**
+```
+NextChat ──HTTP/SSE──▶ file-chat (Go) ──HTTP/SSE──▶ DeepSeek API
+                            │
+                            ├── LLM semantic chunking (parallel 20 workers)
+                            ├── Per-file outline + files_summary.xml
+                            ├── Two-level retrieval (@全部)
+                            └── markitdown document conversion
+```
+
+**Quick Start:**
+```bash
+# Install markitdown
+pip install markitdown
+
+# Build
+cd file-chat && go build -o file-chat
+
+# Configure API key and run
+set DEEPSEEK_API_KEY=your-key-here
+file-chat.exe
+
+# Deploy NextChat, set API endpoint to http://localhost:8080
+```
+
+See [Architecture](./wiki2/Architecture-file-chat.md) and [PRD](./wiki2/PRD-file-chat.md) for details.
+
+---
+
+### 2. CRBSA — Codebook-Routed Block-Sparse Attention
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2+-ee4c2c.svg)](https://pytorch.org/)
 [![Triton](https://img.shields.io/badge/Kernel-Triton-lightgrey)]()
 
-[中文](./README_cn.md)
-
 **CRBSA (Codebook-Routed Block-Sparse Attention)** is a long-context attention architecture that makes 1M–10M token inference practical by replacing $O(N^2)$ routing with a fixed **Global Semantic Codebook**.
 
 Each query routes to only $O(M)$ codebook entries ($M=1024$, a constant), then receives **exact** FlashAttention on the selected blocks — zero information blur, no RNN hidden states, no approximations.
-
----
 
 ## Why CRBSA
 

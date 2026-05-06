@@ -3,3 +3,6 @@
 /file-chat/start-with-key-pan.bat
 /file-chat/*.exe~
 /file-chat/jobs
+/node_modules
+/scripts/start-nextchat.bat
+/scripts/start-filechat.bat

@@ -1,15 +1,66 @@
-# CRBSA: 基于密码本路由的块稀疏注意力
+# SubQ
+
+[English](./README.md)
+
+长上下文与智能问答项目集合。
+
+---
+
+## 子项目
+
+### 1. File-Chat — 长文档智能问答系统
+
+[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://go.dev/)
+[![OpenAI Compatible](https://img.shields.io/badge/API-OpenAI_Compatible-green.svg)]()
+
+基于 Go 的长文本智能问答系统，采用 **Context Engineering** 技术结合 DeepSeek LLM。提供 OpenAI 兼容 API，可与 NextChat 等前端无缝集成。
+
+**核心特性：**
+- LLM 语义分片 — 自动将长文档拆分为有意义的片段并生成摘要
+- 两级检索：文件摘要 → 片段大纲 → Top-K 片段
+- `@路径` 引用指定文件，`@全部` 搜索所有已索引文件
+- 文件变更检测（size → modTime → MD5 hash），避免重复处理
+- 并行处理：20 并发 goroutine，每 worker 处理 30KB
+- 通过 OpenAI 兼容的 `/v1/chat/completions` API 提供 SSE 流式输出
+- 支持 PDF、Excel、Word 等，通过 markitdown 转换
+
+**架构：**
+```
+NextChat ──HTTP/SSE──▶ file-chat (Go) ──HTTP/SSE──▶ DeepSeek API
+                            │
+                            ├── LLM 语义分片（20 并发）
+                            ├── Per-file outline + files_summary.xml
+                            ├── 两级检索（@全部）
+                            └── markitdown 文档转换
+```
+
+**快速开始：**
+```bash
+# 安装 markitdown
+pip install markitdown
+
+# 编译
+cd file-chat && go build -o file-chat
+
+# 配置 API Key 并运行
+set DEEPSEEK_API_KEY=your-key-here
+file-chat.exe
+
+# 部署 NextChat，API 地址设为 http://localhost:8080
+```
+
+详见 [技术架构](./wiki2/Architecture-file-chat.md) 和 [PRD](./wiki2/PRD-file-chat.md)。
+
+---
+
+### 2. CRBSA — 基于密码本路由的块稀疏注意力
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2+-ee4c2c.svg)](https://pytorch.org/)
 [![Triton](https://img.shields.io/badge/Kernel-Triton-lightgrey)]()
 
-[English](./README.md)
-
 **CRBSA (Codebook-Routed Block-Sparse Attention)** 是一种面向 1M~10M Token 超长上下文的注意力架构。通过引入固定大小的全局语义密码本，将路由复杂度从 $O(N^2)$ 降至 $O(M)$（$M=1024$，常数），选中 Block 后执行**精确** FlashAttention —— 零信息模糊，无 RNN 隐状态，无近似。
-
----
 
 ## 为什么选择 CRBSA
 
