@@ -1,0 +1,1 @@
+from crbsa.models.qwen_crbsa import Qwen3CRBSAForCausalLM, apply_crbsa_to_qwen3
