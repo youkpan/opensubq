@@ -95,24 +95,31 @@ func ListExistingDirs(chunksDir string) []string {
 	return dirs
 }
 
+// SafeFileName sanitizes a file path for use as a filename component
+func SafeFileName(filePath string) string {
+	s := filePath
+	// Replace both types of separators
+	s = strings.ReplaceAll(s, "\\", "_")
+	s = strings.ReplaceAll(s, "/", "_")
+	// Remove drive letter colon (Windows)
+	s = strings.ReplaceAll(s, ":", "_")
+	s = strings.TrimLeft(s, "_")
+	return s
+}
+
 // GetChunkFilePath returns the file path for a chunk
 func GetChunkFilePath(chunksDir, filePath, chunkID string) string {
-	safePath := strings.ReplaceAll(filePath, string(filepath.Separator), "_")
-	safePath = strings.TrimLeft(safePath, "_")
-	return filepath.Join(chunksDir, safePath+"_"+chunkID)
+	return filepath.Join(chunksDir, SafeFileName(filePath)+"_"+chunkID)
 }
 
 // GetSourceFilePath returns the path for storing converted source text
 func GetSourceFilePath(sourcesDir, originalPath string) string {
 	ext := filepath.Ext(originalPath)
-	safeName := strings.ReplaceAll(originalPath, string(filepath.Separator), "_")
-	safeName = strings.TrimLeft(safeName, "_")
+	safeName := SafeFileName(originalPath)
 	return filepath.Join(sourcesDir, strings.TrimSuffix(safeName, ext)+".txt")
 }
 
 // GetPerFileOutlinePath returns the outline file path for a specific file
 func GetPerFileOutlinePath(outlinesDir, filePath string) string {
-	safePath := strings.ReplaceAll(filePath, string(filepath.Separator), "_")
-	safePath = strings.TrimLeft(safePath, "_")
-	return filepath.Join(outlinesDir, safePath)
+	return filepath.Join(outlinesDir, SafeFileName(filePath))
 }

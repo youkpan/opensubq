@@ -1,4 +1,4 @@
-# 🚀 CRBSA: Codebook-Routed Block-Sparse Attention
+# CRBSA: Codebook-Routed Block-Sparse Attention
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -7,76 +7,197 @@
 
 [中文](./README_cn.md)
 
-**CRBSA (Codebook-Routed Block-Sparse Attention)** is a revolutionary attention architecture designed to make 1-Million to 10-Million token context windows highly practical, economically viable, and mathematically exact in retrieval. 
+**CRBSA (Codebook-Routed Block-Sparse Attention)** is a long-context attention architecture that makes 1M–10M token inference practical by replacing $O(N^2)$ routing with a fixed **Global Semantic Codebook**.
 
-By replacing $O(N^2)$ query-to-all-tokens routing with a **Global Semantic Codebook** and executing exact local attention via Triton Block-Sparse kernels, CRBSA achieves a **50x+ wall-clock speedup** at 1M context while completely eliminating the "recency bias" and memory degradation typical of linear RNNs.
+Each query routes to only $O(M)$ codebook entries ($M=1024$, a constant), then receives **exact** FlashAttention on the selected blocks — zero information blur, no RNN hidden states, no approximations.
 
 ---
 
-## 💡 Why CRBSA? (The "Impossible Triangle" Solved)
+## Why CRBSA
 
-Existing long-context architectures force a compromise:
-1. **Dense Attention**: Perfect accuracy, but $O(N^2)$ complexity makes >128K tokens a compute and memory disaster.
-2. **Hybrid Compressed Attention (e.g., DeepSeek V4)**: Compresses sequence length by $m$ times, but the indexer still scores every query against every compressed block ($O((N/m)^2)$). At 1M+ tokens, this routing overhead bottlenecks the GPU.
-3. **Linear RNNs / Mamba (e.g., Kimi Linear)**: True $O(N)$ speed, but inherently suffers from *catastrophic forgetting* and *recency bias* over long distances, forcing the retention of heavy dense attention layers as a fallback.
-
-**CRBSA breaks this paradigm:**
-* ⚡ **True Linear Scaling**: Routing complexity is $O(M)$ per query (where $M$ is a fixed number of codebooks, e.g., 1024), completely decoupling routing overhead from sequence length $N$.
-* 🎯 **Zero Information Blur**: No RNN hidden states. Selected long-range blocks are routed directly to a FlashAttention block-sparse kernel for 100% exact attention computation.
-* 🛠️ **Hardware Sympathy**: Operates purely at the *Block* level (e.g., 128 tokens). No scattered token-level gathers, ensuring maximum Tensor Core utilization and zero padding waste.
-
-## ⚙️ Architecture
-
-CRBSA operates in four seamlessly parallelizable steps:
-1. **Block Summarization ($O(N)$)**: The input sequence is chunked (e.g., $B=128$), and keys are mean-pooled into block summaries.
-2. **Codebook Inverted Indexing ($O(N)$)**: Block summaries are projected against a fixed, learnable Global Semantic Codebook ($M=1024$), assigning each block to a semantic cluster.
-3. **$O(1)$ Query Routing**: Each Query attends *only* to the Codebook to find its Top-K matching semantic clusters, fetching the associated Block IDs.
-4. **Exact Block-Sparse Attention**: A custom Triton kernel performs Exact FlashAttention solely on the selected remote blocks + a local sliding window.
-
-## 📊 Benchmarks (Simulated 1M Tokens)
-
-| Metric | Dense Attention | DeepSeek V4 (CSA) | Linear RNNs | **CRBSA (Ours)** |
+| | Dense Attn | DeepSeek V4 | Linear RNN | **CRBSA** |
 |:---|:---|:---|:---|:---|
 | **Complexity** | $O(N^2)$ | $O((N/m)^2)$ | $O(N)$ | **$O(N)$** |
-| **Prefill Speedup (1M)** | 1.0x (Baseline) | ~10.0x | ~8.0x (due to dense layers) | **> 50.0x** |
-| **Recency Bias** | None | Low | **High** | **None** |
+| **1M Prefill Speedup** | 1× | ~10× | ~8× | **>50×** |
+| **Recency Bias** | None | Low | High | **None** |
 | **Multi-hop Retrieval** | Excellent | Good | Poor | **Excellent** |
 
-## 🚀 Quick Start
+## Architecture
 
-### Installation
+```
+Input ──▶ Q/K/V Proj ──▶ Block Summarize ──▶ Codebook Inverted Index
+                                       │              │
+                                       │    Query × Codebook (O(M))
+                                       │              │
+                                       ▼              ▼
+                                 Local Window  +  Routed Blocks
+                                              │
+                                   Triton Block-Sparse FlashAttn
+                                              │
+                                           Output
+```
+
+Four steps, all parallelizable:
+1. **Block Summarization** — chunk into $B=128$, mean-pool keys → summaries
+2. **Codebook Indexing** — assign each block to one of $M=1024$ learnable semantic clusters
+3. **$O(1)$ Query Routing** — query scores against codebook, top-$K$ cluster → block IDs
+4. **Exact Sparse Attention** — Triton/Flex/Dense kernel on selected blocks only
+
+## Quick Start
+
+### Install
+
 ```bash
 git clone https://github.com/your-org/CRBSA.git
 cd CRBSA
 pip install -e .
 ```
 
-### Usage (Inference)
-CRBSA provides a drop-in replacement for HuggingFace Transformers layers.
-```python
-import torch
-from crbsa.models import LlamaCRBSAForCausalLM
-from crbsa.config import CRBSAConfig
+### Verify Modules
 
-# Load a 7B model adapted with CRBSA
-config = CRBSAConfig.from_pretrained("meta-llama/Llama-3-8B")
-config.crbsa_block_size = 128
-config.crbsa_codebook_size = 1024
-config.crbsa_topk_blocks = 8 # attends to 1024 tokens globally per query
+```bash
+# Test all modules without loading a model
+python scripts/verify.py --seq-len 2048 --debug
 
-model = LlamaCRBSAForCausalLM(config).cuda().to(torch.bfloat16)
-
-# Forward pass with 1M tokens (Requires ~24GB VRAM instead of OOM)
-input_ids = torch.randint(0, config.vocab_size, (1, 1000000)).cuda()
-output = model(input_ids)
+# Full model test (needs GPU)
+python scripts/verify.py --model Qwen/Qwen3.6-35B-A3B --seq-len 4096 --debug
 ```
 
-## 🧠 Training Pipeline
+### Inference
 
-Training sparse attention from scratch often leads to index collapse. We provide a bullet-proof 3-stage training pipeline (see `scripts/train/`):
-1. **Router Distillation**: Freeze the LLM backbone. Distill the Codebook Router using dense attention weights as Ground Truth on 128K context data.
-2. **Detached Sparse Tuning**: Unfreeze all parameters. Use the router for block-sparse forward passes, but **detach** the router's gradients from the main language modeling loss to prevent short-sighted attention degradation.
-3. **Long-Context RLHF (GRPO)**: Optimize retrieval behaviors on RULER and SWE-bench by rewarding the model for accurately fetching and utilizing distant constraint blocks.
+```python
+import torch
+from crbsa.config import CRBSAConfig
+from crbsa.models import apply_crbsa_to_qwen3
 
-## 🤝 Contributing & License
-We welcome contributions to Triton kernel optimizations and distributed sequence parallelism (DeepSpeed Ulysses integration). Licensed under the MIT License.
+# Configure
+config = CRBSAConfig.from_pretrained("Qwen/Qwen3.6-35B-A3B")
+config.block_size = 128
+config.codebook_size = 1024
+config.max_routed_blocks = 6
+
+# Load model with CRBSA attention
+model = apply_crbsa_to_qwen3("Qwen/Qwen3.6-35B-A3B", config)
+model.eval()
+
+# Forward with long context
+input_ids = torch.randint(0, config.vocab_size, (1, 100000)).cuda()
+result = model(input_ids=input_ids)
+print(result["logits"].shape)
+```
+
+### Debug Mode
+
+All debug switches are in `CRBSAConfig`. Zero overhead when disabled.
+
+```python
+config = CRBSAConfig(
+    debug_enabled=True,            # master switch
+    debug_log_routing=True,        # top-K codebook IDs, scores
+    debug_log_block_assignment=True,  # codebook distribution, entropy
+    debug_check_numerics=True,     # NaN/Inf detection
+    debug_profile_kernel=True,     # per-step timing
+    debug_save_intermediates=True, # save tensors to disk
+)
+```
+
+## Training Pipeline
+
+Three-stage pipeline to avoid index collapse (`scripts/train/`):
+
+**Stage 1 — Router Distillation** (`stage1_distill.py`)
+
+Freeze backbone, train codebook router with dense attention ground truth.
+
+```bash
+python scripts/train/stage1_distill.py \
+    --model Qwen/Qwen3.6-35B-A3B \
+    --seq-len 131072 --epochs 3 --debug
+```
+
+**Stage 2 — Detached Sparse Tuning** (`stage2_sft.py`)
+
+Unfreeze all. Route sparse, but **detach** router gradients from LM loss.
+
+```bash
+python scripts/train/stage2_sft.py \
+    --model Qwen/Qwen3.6-35B-A3B \
+    --stage1-dir outputs/stage1 --epochs 2 --debug
+```
+
+**Stage 3 — GRPO RL** (`stage3_grpo.py`)
+
+RL rewards for successful long-range retrieval on NIAH/SWE-bench tasks.
+
+```bash
+python scripts/train/stage3_grpo.py \
+    --model Qwen/Qwen3.6-35B-A3B --debug
+```
+
+Or all at once:
+
+```bash
+bash scripts/train/run_all.sh
+```
+
+## Evaluation
+
+```bash
+# NIAH: needle-in-a-haystack at various lengths and depths
+python scripts/eval/eval_niah.py --model Qwen/Qwen3.6-35B-A3B --debug
+
+# Routing accuracy vs dense attention ground truth
+python scripts/eval/eval_routing.py --seq-len 32768 --debug
+
+# Kernel benchmark: CRBSA vs Dense at different seq lengths
+python scripts/eval/benchmark_kernel.py --seq-lengths 2048 4096 8192 16384
+```
+
+## Project Structure
+
+```
+crbsa/
+├── config.py                  # CRBSAConfig — all hyperparams + debug switches
+├── debug.py                   # DebugContext / DebugCollector / CRBSAProfiler
+├── nn/
+│   ├── block_summarizer.py    # Step 1: block summary (pool → project)
+│   ├── codebook_router.py     # Step 2+3: inverted index + query routing
+│   ├── sparse_attention.py    # Step 4: Triton / Flex / Dense backends
+│   └── crbsa_layer.py         # Full layer: 4-step pipeline + RoPE + detach
+├── kernels/
+│   └── block_sparse_attn.py   # Triton kernel + fallback implementations
+├── models/
+│   └── qwen_crbsa.py          # Qwen3.6-35B-A3B (MoE) adapter
+├── utils/
+│   ├── distributed.py         # Ulysses sequence parallel + P2P KV fetch
+│   └── profiling.py           # BenchmarkResult + VRAM measurement
+scripts/
+├── verify.py                  # Quick module + model verification
+├── train/                     # 3-stage training scripts + run_all.sh
+└── eval/                      # NIAH, routing accuracy, kernel benchmark
+wiki/
+├── Architecture.md            # Full architecture document
+└── Code-Design.md             # Code design + debug roadmap
+```
+
+## Supported Models
+
+CRBSA is designed for and tested with **Qwen3.6-35B-A3B** (MoE, 35B total / 3B active). The adapter preserves MoE MLP layers and only replaces attention layers.
+
+The architecture is general and can be adapted to any Transformer model with GQA.
+
+## Key Parameters
+
+| Parameter | Default | Description |
+|:---|:---|:---|
+| `block_size` | 128 | Tokens per block (matches Triton optimal throughput) |
+| `codebook_size` | 1024 | Number of semantic clusters |
+| `route_dim` | 64 | Router projection dimension |
+| `topk_codebooks` | 4 | Codebook clusters per query |
+| `max_routed_blocks` | 6 | Max remote blocks per query |
+| `local_blocks` | 2 | Local sliding window blocks |
+| `route_temperature` | 1.0 | Softmax temperature for codebook selection |
+
+## License
+
+MIT

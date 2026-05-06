@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"file-chat/llm"
@@ -32,6 +33,13 @@ func NewChatService(client *llm.Client, jobsDir, markitdownCmd string, chunkToke
 	}
 }
 
+// fileTask holds a file to process and its result
+type fileTask struct {
+	filePath string
+	chunks   []model.Chunk
+	err      error
+}
+
 // ProcessRequest handles a full chat request: extract paths, process files, build context
 func (s *ChatService) ProcessRequest(messages []model.Message, conversationID string) ([]llm.ChatMessage, error) {
 	// 1. Determine job ID
@@ -48,7 +56,7 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		jobID = "default"
 	}
 
-	// 2. Extract @paths and @全部 from all user messages
+	// 2. Extract @paths and @全部
 	var allPaths []string
 	var hasAll bool
 	var cleanMessages []llm.ChatMessage
@@ -65,32 +73,30 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		})
 	}
 
-	// 3. If no paths and no @全部, return clean messages directly
 	if len(allPaths) == 0 && !hasAll {
 		return cleanMessages, nil
 	}
 
-	// 4. Init job
+	// 3. Init job
 	jp, err := store.InitJob(s.JobsDir, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("init job: %w", err)
 	}
 
-	// 5. Load global file registry
+	// 4. Load registry and outline
 	registry, err := store.ReadFileRegistry(s.JobsDir)
 	if err != nil {
 		log.Printf("read registry: %v", err)
 		registry = &model.FileRegistry{Files: make(map[string]*model.FileEntry)}
 	}
 
-	// 6. Load outline
 	outline, err := ReadOutline(jp.Outline)
 	if err != nil {
 		return nil, fmt.Errorf("read outline: %w", err)
 	}
 
-	// 7. Process each path with change detection
-	registryChanged := false
+	// 5. Resolve all paths to file lists, filter unchanged
+	var filesToProcess []string
 	for _, rawPath := range allPaths {
 		absPath, isDir := ResolvePath(rawPath)
 		if absPath == "" {
@@ -106,60 +112,76 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		}
 
 		for _, f := range files {
-			relPath := f
-
-			// Check registry for change detection
-			entry := registry.Files[relPath]
+			entry := registry.Files[f]
 			if entry != nil && !IsFileChanged(f, entry) {
-				// File unchanged, skip processing
-				continue
+				continue // unchanged, skip
 			}
-
-			// File changed or new: cleanup old data if changed
+			// File changed: cleanup old data
 			if entry != nil {
-				log.Printf("file changed, re-processing: %s", relPath)
-				CleanupFileChunks(jp, relPath, outline)
-				// Reload outline after cleanup
+				log.Printf("file changed, re-processing: %s", f)
+				CleanupFileChunks(jp, f, outline)
 				outline, _ = ReadOutline(jp.Outline)
 			}
+			filesToProcess = append(filesToProcess, f)
+		}
+	}
 
-			// Process file
-			chunks, err := ProcessFile(s.Client, jp, f, s.MarkitdownCmd, s.SmallFileSize, outline)
-			if err != nil {
-				log.Printf("process file %s: %v", f, err)
+	// 6. Process files in parallel (up to 20 concurrent)
+	if len(filesToProcess) > 0 {
+		tasks := make([]fileTask, len(filesToProcess))
+		sem := make(chan struct{}, maxConcurrency)
+		var wg sync.WaitGroup
+
+		for i, f := range filesToProcess {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(idx int, filePath string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				chunks, err := ProcessFile(s.Client, jp, filePath, s.MarkitdownCmd, s.SmallFileSize, outline)
+				tasks[idx] = fileTask{filePath: filePath, chunks: chunks, err: err}
+			}(i, f)
+		}
+		wg.Wait()
+
+		// 7. Sequential: assemble results into outline + registry
+		registryChanged := false
+		for _, t := range tasks {
+			if t.err != nil {
+				log.Printf("process file %s: %v", t.filePath, t.err)
 				continue
 			}
-			if len(chunks) == 0 {
+			if len(t.chunks) == 0 {
 				continue
 			}
 
 			// Append to global outline
-			if err := AppendChunks(jp.Outline, chunks); err != nil {
+			if err := AppendChunks(jp.Outline, t.chunks); err != nil {
 				log.Printf("append chunks: %v", err)
 				continue
 			}
-			outline.Chunks = append(outline.Chunks, chunks...)
+			outline.Chunks = append(outline.Chunks, t.chunks...)
 
 			// Write per-file outline
-			if err := WritePerFileOutline(jp.OutlinesDir, chunks); err != nil {
+			if err := WritePerFileOutline(jp.OutlinesDir, t.chunks); err != nil {
 				log.Printf("write per-file outline: %v", err)
 			}
 
-			// Generate file summary and update files_summary.xml
-			summary, err := GenerateFileSummary(s.Client, chunks)
+			// Generate file summary
+			summary, err := GenerateFileSummary(s.Client, t.chunks)
 			if err != nil {
 				log.Printf("generate summary: %v", err)
-				summary = fmt.Sprintf("文件 %s 的内容", relPath)
+				summary = fmt.Sprintf("文件 %s 的内容", t.filePath)
 			}
-			if err := AppendFileSummary(jp.FilesSummary, relPath, summary); err != nil {
+			if err := AppendFileSummary(jp.FilesSummary, t.filePath, summary); err != nil {
 				log.Printf("append file summary: %v", err)
 			}
 
 			// Update registry
-			hash, _ := store.ComputeFileHash(f)
-			modTime, _ := store.GetFileModTime(f)
-			size, _ := store.GetFileSize(f)
-			registry.Files[relPath] = &model.FileEntry{
+			hash, _ := store.ComputeFileHash(t.filePath)
+			modTime, _ := store.GetFileModTime(t.filePath)
+			size, _ := store.GetFileSize(t.filePath)
+			registry.Files[t.filePath] = &model.FileEntry{
 				Hash:        hash,
 				ModTime:     modTime,
 				Size:        size,
@@ -167,16 +189,13 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 			}
 			registryChanged = true
 		}
-	}
 
-	// 8. Save registry if changed
-	if registryChanged {
-		if err := store.WriteFileRegistry(s.JobsDir, registry); err != nil {
-			log.Printf("write registry: %v", err)
+		if registryChanged {
+			store.WriteFileRegistry(s.JobsDir, registry)
 		}
 	}
 
-	// 9. Reload outline for retrieval
+	// 8. Reload outline for retrieval
 	outline, err = ReadOutline(jp.Outline)
 	if err != nil {
 		return nil, fmt.Errorf("reload outline: %w", err)
@@ -186,7 +205,7 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		return cleanMessages, nil
 	}
 
-	// 10. Get last user message as query
+	// 9. Get query
 	var query string
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -195,7 +214,7 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		}
 	}
 
-	// 11. Retrieve relevant chunks
+	// 10. Retrieve
 	var selected []model.Chunk
 	if hasAll {
 		selected, err = HandleAllFiles(s.Client, jp, query, s.MaxRetrieve)
@@ -214,14 +233,14 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		return cleanMessages, nil
 	}
 
-	// 12. Build context
+	// 11. Build context
 	context, err := BuildContext(jp.Chunks, jp.Sources, selected)
 	if err != nil {
 		log.Printf("build context: %v", err)
 		return cleanMessages, nil
 	}
 
-	// 13. Construct final messages with context
+	// 12. Construct final messages
 	finalMessages := []llm.ChatMessage{
 		{
 			Role: "system",

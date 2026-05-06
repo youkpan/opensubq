@@ -1,82 +1,201 @@
-# 🇨🇳 中文版 (Chinese Version)
-
-# 🚀 CRBSA: 基于密码本路由的块稀疏注意力
+# CRBSA: 基于密码本路由的块稀疏注意力
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2+-ee4c2c.svg)](https://pytorch.org/)
 [![Triton](https://img.shields.io/badge/Kernel-Triton-lightgrey)]()
 
-**CRBSA (Codebook-Routed Block-Sparse Attention)** 是一种颠覆性的注意力底层架构。它旨在打破超长上下文的物理和算力瓶颈，让 **100 万到 1000 万 Token** 的推理与训练变得不仅可行，而且极其廉价，同时保持完美的信息召回精度。
+[English](./README.md)
 
-通过放弃传统的 $O(N^2)$ “Query遍历Token” 打分机制，引入**全局语义密码本 (Global Semantic Codebook)**，并结合 Triton 优化的块稀疏算子，CRBSA 在 1M 长度下实现了 **50倍以上的吞吐加速**，且彻底消除了线性 RNN 架构中致命的“距离衰减/记忆模糊”问题。
+**CRBSA (Codebook-Routed Block-Sparse Attention)** 是一种面向 1M~10M Token 超长上下文的注意力架构。通过引入固定大小的全局语义密码本，将路由复杂度从 $O(N^2)$ 降至 $O(M)$（$M=1024$，常数），选中 Block 后执行**精确** FlashAttention —— 零信息模糊，无 RNN 隐状态，无近似。
 
 ---
 
-## 💡 为什么选择 CRBSA？（打破不可能三角）
+## 为什么选择 CRBSA
 
-当前业界的长文本方案都在做妥协：
-1. **稠密注意力 (Dense)**：精度完美，但 $O(N^2)$ 的复杂度让 128K 以上的序列成为显存和算力的灾难。
-2. **混合压缩稀疏 (如 DeepSeek V4 CSA)**：将序列长度压缩 $m$ 倍，但其路由打分器的复杂度依然是 $O((N/m)^2)$。当文本长度推至 1M 以上时，打分器本身的计算量会再次打爆 GPU。
-3. **线性混合 RNN (如 Kimi Linear)**：速度极快 ($O(N)$)，但隐状态压缩不可避免地导致“灾难性遗忘”和近处偏差，必须依赖沉重的全局稠密层进行兜底。
-
-**CRBSA 实现了真正的降维打击：**
-* ⚡ **真·线性扩展**：对每个 Query 的路由寻址时间是恒定的 $O(M)$（$M$ 为固定的密码本数量，如 1024）。路由算力消耗与上下文总长度 $N$ **完全解耦**。
-* 🎯 **零信息损耗**：不使用任何会丢失细节的 RNN 隐状态。路由器定位到远距离 Block 后，底层算子直接拉取全精度 KV 缓存进行 Exact FlashAttention 计算。
-* 🛠️ **极致硬件友好**：全流程以 Block（如 128 tokens）为最小颗粒度。无任何离散的 Token 级内存跳跃，完全榨干 Tensor Core 性能。
-
-## ⚙️ 核心架构
-
-CRBSA 的计算流高度并行化，分为四步：
-1. **局部块压缩 ($O(N)$)**：将输入序列按 $B=128$ 分块，Key 被极速池化为块摘要 (Block Summaries)。
-2. **密码本倒排建库 ($O(N)$)**：块摘要与全局静态密码本（$M=1024$）相乘，为每个块分配语义桶，构建倒排索引。
-3. **$O(1)$ Query 路由**：每个 Query **仅**与密码本计算相似度，找出最匹配的 Top-K 语义桶，瞬间召回目标 Block IDs。
-4. **精确块稀疏注意力**：通过定制的 Triton Kernel，仅对“局部滑动窗口 + 召回的远距离 Block”进行标准的 FlashAttention。
-
-## 📊 性能基准对比 (1M Token 模拟)
-
-| 核心指标 | 稠密注意力 (Dense) | DeepSeek V4 路线 | Kimi RNN 路线 | **CRBSA (我们)** |
+| | 稠密注意力 | DeepSeek V4 | 线性 RNN | **CRBSA** |
 |:---|:---|:---|:---|:---|
-| **算法复杂度** | $O(N^2)$ | $O((N/m)^2)$ | $O(N)$ | **真 $O(N)$** |
-| **Prefill 加速比 (1M)** | 1.0x (基线) | ~10.0x | ~8.0x (受稠密层拖累) | **> 50.0x** |
-| **长程距离衰减 (幻觉)** | 无 | 较低 | **极高** | **无** |
-| **多跳检索 (MRCR/RULER)**| 极强 | 强 | 弱 | **极强** |
+| **复杂度** | $O(N^2)$ | $O((N/m)^2)$ | $O(N)$ | **$O(N)$** |
+| **1M Prefill 加速** | 1× | ~10× | ~8× | **>50×** |
+| **近处偏差** | 无 | 低 | 高 | **无** |
+| **多跳检索** | 极强 | 强 | 弱 | **极强** |
 
-## 🚀 快速上手
+## 架构
+
+```
+输入 ──▶ Q/K/V 投影 ──▶ Block 摘要 ──▶ 密码本倒排索引
+                                    │              │
+                                    │    Query × 密码本 (O(M))
+                                    │              │
+                                    ▼              ▼
+                              局部滑动窗口  +  路由召回 Block
+                                             │
+                                  Triton 块稀疏 FlashAttention
+                                             │
+                                           输出
+```
+
+四步并行计算流：
+1. **Block 摘要** — 按 $B=128$ 切块，Key 平均池化为摘要向量
+2. **密码本索引** — 将每个 Block 分配到 $M=1024$ 个可学习语义聚类中心之一
+3. **$O(1)$ Query 路由** — Query 与密码本打分，取 Top-$K$ 聚类 → 召回 Block IDs
+4. **精确稀疏注意力** — Triton/Flex/Dense 算子仅对选中 Block 执行 FlashAttention
+
+## 快速开始
 
 ### 安装
+
 ```bash
 git clone https://github.com/your-org/CRBSA.git
 cd CRBSA
 pip install -e .
 ```
 
-### 使用方式 (推理)
-CRBSA 可直接替换 HuggingFace Transformers 中的原生 Attention 层。
-```python
-import torch
-from crbsa.models import LlamaCRBSAForCausalLM
-from crbsa.config import CRBSAConfig
+### 验证模块
 
-# 加载适配 CRBSA 的 7B 级别大模型
-config = CRBSAConfig.from_pretrained("meta-llama/Llama-3-8B")
-config.crbsa_block_size = 128
-config.crbsa_codebook_size = 1024
-config.crbsa_topk_blocks = 8 # 每个 Query 无论多长都只与最相关的 1024 个 token 计算
+```bash
+# 不加载模型，纯模块测试
+python scripts/verify.py --seq-len 2048 --debug
 
-model = LlamaCRBSAForCausalLM(config).cuda().to(torch.bfloat16)
-
-# 1M tokens 超长输入前向传播（不再 OOM，仅需约 24GB 显存）
-input_ids = torch.randint(0, config.vocab_size, (1, 1000000)).cuda()
-output = model(input_ids)
+# 完整模型测试（需要 GPU）
+python scripts/verify.py --model Qwen/Qwen3.6-35B-A3B --seq-len 4096 --debug
 ```
 
-## 🧠 工业级三阶段训练法则
+### 推理
 
-为了避免稀疏注意力常见的“索引坍塌”或“路由退化”，我们开源了一套久经考验的三阶段训练 Pipeline（详见 `scripts/train/`）：
-1. **路由器离线蒸馏 (Router Distillation)**：冻结大模型主干参数。在 128K 数据上跑稠密注意力作为 Ground Truth，强监督训练 Codebook 路由器，让其学会找寻关键 Block。
-2. **截断式稀疏微调 (Detached Sparse Tuning)**：全参解冻。使用路由器输出的稀疏掩码进行前向计算，但**在反向传播时将路由器的梯度与语言模型 Loss 彻底截断 (Detach)**。这能绝对防止模型为了走捷径而摧毁路由器的长程寻址能力。
-3. **长文本强化学习对齐 (RLHF/GRPO)**：在 RULER 和 SWE-bench 风格的数据上，对“跨越超长距离成功检索并应用约束”的模型行为给予高额 Reward，彻底激活模型的功能性长上下文能力。
+```python
+import torch
+from crbsa.config import CRBSAConfig
+from crbsa.models import apply_crbsa_to_qwen3
 
-## 🤝 贡献与许可
-我们非常欢迎针对 Triton 算子底层优化、以及多卡分布式序列并行（集成 DeepSpeed Ulysses 异步 KV 拉取）的 PR。本项目基于 MIT 许可证开源。
+# 配置
+config = CRBSAConfig.from_pretrained("Qwen/Qwen3.6-35B-A3B")
+config.block_size = 128
+config.codebook_size = 1024
+config.max_routed_blocks = 6
+
+# 加载 CRBSA 模型
+model = apply_crbsa_to_qwen3("Qwen/Qwen3.6-35B-A3B", config)
+model.eval()
+
+# 长上下文前向传播
+input_ids = torch.randint(0, config.vocab_size, (1, 100000)).cuda()
+result = model(input_ids=input_ids)
+print(result["logits"].shape)
+```
+
+### 调试模式
+
+所有调试开关集中在 `CRBSAConfig` 中，关闭时零开销。
+
+```python
+config = CRBSAConfig(
+    debug_enabled=True,               # 总开关
+    debug_log_routing=True,           # Top-K 密码本 ID、分数
+    debug_log_block_assignment=True,  # 密码本分布、熵
+    debug_check_numerics=True,        # NaN/Inf 检测
+    debug_profile_kernel=True,        # 每步计时
+    debug_save_intermediates=True,    # 保存中间张量到磁盘
+)
+```
+
+## 训练流程
+
+三阶段训练策略，避免索引坍塌（`scripts/train/`）：
+
+**Stage 1 — 路由器蒸馏** (`stage1_distill.py`)
+
+冻结主干，用稠密注意力 Ground Truth 训练密码本路由器。
+
+```bash
+python scripts/train/stage1_distill.py \
+    --model Qwen/Qwen3.6-35B-A3B \
+    --seq-len 131072 --epochs 3 --debug
+```
+
+**Stage 2 — 截断式稀疏微调** (`stage2_sft.py`)
+
+全参解冻。路由稀疏前向，但**截断**路由器梯度与 LM Loss 的连接。
+
+```bash
+python scripts/train/stage2_sft.py \
+    --model Qwen/Qwen3.6-35B-A3B \
+    --stage1-dir outputs/stage1 --epochs 2 --debug
+```
+
+**Stage 3 — GRPO 强化学习** (`stage3_grpo.py`)
+
+在 NIAH/SWE-bench 任务上用 RL 奖励长程检索行为。
+
+```bash
+python scripts/train/stage3_grpo.py \
+    --model Qwen/Qwen3.6-35B-A3B --debug
+```
+
+一键运行：
+
+```bash
+bash scripts/train/run_all.sh
+```
+
+## 评测
+
+```bash
+# NIAH：不同长度和深度的大海捞针测试
+python scripts/eval/eval_niah.py --model Qwen/Qwen3.6-35B-A3B --debug
+
+# 路由命中率：对比稠密注意力 Ground Truth
+python scripts/eval/eval_routing.py --seq-len 32768 --debug
+
+# Kernel 性能：CRBSA vs Dense 在不同序列长度下的对比
+python scripts/eval/benchmark_kernel.py --seq-lengths 2048 4096 8192 16384
+```
+
+## 项目结构
+
+```
+crbsa/
+├── config.py                  # CRBSAConfig — 所有超参 + 调试开关
+├── debug.py                   # DebugContext / DebugCollector / CRBSAProfiler
+├── nn/
+│   ├── block_summarizer.py    # Step 1: Block 摘要 (池化 → 投影)
+│   ├── codebook_router.py     # Step 2+3: 倒排索引 + Query 路由
+│   ├── sparse_attention.py    # Step 4: Triton / Flex / Dense 三后端
+│   └── crbsa_layer.py         # 完整 Layer: 4 步流水线 + RoPE + Detach
+├── kernels/
+│   └── block_sparse_attn.py   # Triton Kernel + fallback 实现
+├── models/
+│   └── qwen_crbsa.py          # Qwen3.6-35B-A3B (MoE) 适配器
+├── utils/
+│   ├── distributed.py         # Ulysses 序列并行 + P2P KV 拉取
+│   └── profiling.py           # BenchmarkResult + 显存测量
+scripts/
+├── verify.py                  # 快速模块 + 模型验证
+├── train/                     # 三阶段训练脚本 + run_all.sh
+└── eval/                      # NIAH、路由命中率、Kernel 性能评测
+wiki/
+├── Architecture.md            # 完整架构文档
+└── Code-Design.md             # 代码设计 + 调试优化路线
+```
+
+## 支持模型
+
+CRBSA 面向 **Qwen3.6-35B-A3B**（MoE 架构，35B 总参 / 3B 激活）设计和测试。适配器保留 MoE MLP 层，仅替换 Attention 层。
+
+架构通用，可适配任何带 GQA 的 Transformer 模型。
+
+## 核心参数
+
+| 参数 | 默认值 | 说明 |
+|:---|:---|:---|
+| `block_size` | 128 | 每 Block Token 数（匹配 Triton 最优吞吐） |
+| `codebook_size` | 1024 | 语义聚类中心数 |
+| `route_dim` | 64 | 路由投影维度 |
+| `topk_codebooks` | 4 | 每个 Query 召回的密码本聚类数 |
+| `max_routed_blocks` | 6 | 每个 Query 最大远距离 Block 数 |
+| `local_blocks` | 2 | 局部滑动窗口 Block 数 |
+| `route_temperature` | 1.0 | 密码本选择的 Softmax 温度 |
+
+## 许可
+
+MIT
