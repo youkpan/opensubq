@@ -12,7 +12,9 @@ import (
 
 const allFilesRetrievePrompt = `你是一个文档检索助手。以下是系统中所有已处理文件的摘要：
 
+<files_summary>
 %s
+</files_summary>
 
 请根据用户的问题，列出最相关的文件路径，每行一个，最多 %d 个。
 只输出文件路径，不要输出其他内容。`

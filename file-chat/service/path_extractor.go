@@ -11,13 +11,16 @@ import (
 var pathPattern = regexp.MustCompile(`@((?:[A-Za-z]:[\\/]|[.]{0,2}[\\/])\S+|\S+[\\/]\S+)`)
 
 const AllFilesMarker = "@全部"
+const AllFilesMarkerEn = "@all"
 
 // ExtractPaths extracts @path references from message content.
-// Returns (paths, hasAll) where hasAll indicates @全部 was used.
+// Returns (paths, hasAll) where hasAll indicates @全部 or @all was used.
 func ExtractPaths(content string) ([]string, bool) {
-	// Remove @全部 first so it doesn't interfere with path matching
+	// Remove @全部/@all first so they don't interfere with path matching
 	cleaned := strings.ReplaceAll(content, AllFilesMarker, "")
-	hasAll := strings.Contains(content, AllFilesMarker)
+	cleaned = strings.ReplaceAll(cleaned, AllFilesMarkerEn+" ", " ")
+	cleaned = strings.ReplaceAll(cleaned, AllFilesMarkerEn, "")
+	hasAll := strings.Contains(content, AllFilesMarker) || strings.Contains(content, AllFilesMarkerEn+" ") || strings.HasSuffix(strings.TrimSpace(content), AllFilesMarkerEn)
 
 	matches := pathPattern.FindAllStringSubmatch(cleaned, -1)
 	seen := make(map[string]bool)
@@ -36,9 +39,11 @@ func ExtractPaths(content string) ([]string, bool) {
 	return paths, hasAll
 }
 
-// CleanPaths removes @path references and @全部 from message content
+// CleanPaths removes @path references and @全部/@all from message content
 func CleanPaths(content string) string {
 	content = strings.ReplaceAll(content, AllFilesMarker, "")
+	content = strings.ReplaceAll(content, AllFilesMarkerEn+" ", " ")
+	content = strings.ReplaceAll(content, AllFilesMarkerEn, "")
 	return pathPattern.ReplaceAllString(content, "")
 }
 

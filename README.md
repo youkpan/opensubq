@@ -18,7 +18,7 @@ A Go-based long-text intelligent Q&A system using **Context Engineering** with D
 **Key Features:**
 - LLM-based semantic chunking — auto-splits long documents into meaningful chunks with summaries
 - Two-level retrieval: file summaries → chunk outlines → top-K chunks
-- `@path` to reference specific files, `@全部` to search all indexed files
+- `@path` to reference specific files, `@全部`/`@all` to search all indexed files
 - File change detection (size → modTime → MD5 hash) avoids reprocessing
 - Parallel processing: 20 concurrent goroutines, 30KB segments per worker
 - SSE streaming via OpenAI-compatible `/v1/chat/completions` API
@@ -30,7 +30,7 @@ NextChat ──HTTP/SSE──▶ file-chat (Go) ──HTTP/SSE──▶ DeepSeek
                             │
                             ├── LLM semantic chunking (parallel 20 workers)
                             ├── Per-file outline + files_summary.xml
-                            ├── Two-level retrieval (@全部)
+                            ├── Two-level retrieval (@全部/@all)
                             └── markitdown document conversion
 ```
 

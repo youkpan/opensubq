@@ -14,7 +14,9 @@ import (
 
 const retrievalSystemPrompt = `你是一个文档检索助手。以下是文档的索引大纲：
 
+<outline>
 %s
+</outline>
 
 请根据用户的问题，按相关性从高到低列出最相关的片段ID。
 只输出chunk_id，每行一个，最多 %d 个。

@@ -12,9 +12,10 @@ import (
 
 const summaryPrompt = `你是一个文档摘要助手。请为以下文件生成一段简洁的摘要（50-150字），概括文件的主要内容。
 
-文件路径：%s
-文件片段摘要：
+<file_path>%s</file_path>
+<chunk_summaries>
 %s
+</chunk_summaries>
 
 请直接输出摘要文本，不要输出其他内容。`
 

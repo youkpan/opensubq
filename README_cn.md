@@ -18,7 +18,7 @@
 **核心特性：**
 - LLM 语义分片 — 自动将长文档拆分为有意义的片段并生成摘要
 - 两级检索：文件摘要 → 片段大纲 → Top-K 片段
-- `@路径` 引用指定文件，`@全部` 搜索所有已索引文件
+- `@路径` 引用指定文件，`@全部`/`@all` 搜索所有已索引文件
 - 文件变更检测（size → modTime → MD5 hash），避免重复处理
 - 并行处理：20 并发 goroutine，每 worker 处理 30KB
 - 通过 OpenAI 兼容的 `/v1/chat/completions` API 提供 SSE 流式输出
@@ -30,7 +30,7 @@ NextChat ──HTTP/SSE──▶ file-chat (Go) ──HTTP/SSE──▶ DeepSeek
                             │
                             ├── LLM 语义分片（20 并发）
                             ├── Per-file outline + files_summary.xml
-                            ├── 两级检索（@全部）
+                            ├── 两级检索（@全部/@all）
                             └── markitdown 文档转换
 ```
 

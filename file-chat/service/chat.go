@@ -308,7 +308,7 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 	if context != "" {
 		finalMessages = append(finalMessages, llm.ChatMessage{
 			Role:    "user",
-			Content: fmt.Sprintf("以下是相关文档内容：\n\n%s", context),
+			Content: fmt.Sprintf("以下是相关文档内容：\n\n<document_content>\n%s\n</document_content>", context),
 		})
 		finalMessages = append(finalMessages, llm.ChatMessage{
 			Role:    "assistant",

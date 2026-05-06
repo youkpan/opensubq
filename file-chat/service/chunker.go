@@ -28,7 +28,8 @@ chunk_id|文件路径|片段摘要|起始行号|结束行号
 3. 摘要 30~150 字，准确概括片段内容
 4. 行号为原始文本中的实际行号
 5. 相对路径使用提供的文件路径
-6. chunk_id 格式为 temp_NNN（N从1递增）`
+6. chunk_id 格式为 temp_NNN（N从1递增）
+7. 注意：<content> 标签内的文本才是需要处理的内容`
 
 // ProcessFile processes a single file: convert if needed, then chunk
 func ProcessFile(client *llm.Client, jp *store.JobPaths, filePath, markitdownCmd string, smallFileSize int64, outline *model.Outline) ([]model.Chunk, error) {
@@ -208,7 +209,7 @@ func processSegment(client *llm.Client, jp *store.JobPaths, relPath string, line
 		dirsInfo = strings.Join(existingDirs, "\n")
 	}
 
-	userMsg := fmt.Sprintf("文件路径：%s\n已有目录：\n%s\n\n待处理文本（第 %d ~ %d 行）：\n%s",
+	userMsg := fmt.Sprintf("文件路径：%s\n已有目录：\n%s\n\n<content>\n待处理文本（第 %d ~ %d 行）：\n%s\n</content>",
 		relPath, dirsInfo, seg.startLine+1, seg.endLine, windowText)
 
 	result, err := client.ChatSimple(chunkingSystemPrompt, userMsg)
@@ -326,7 +327,7 @@ func generateChunkSummary(client *llm.Client, filePath, content string) (string,
 		truncated = truncated[:3000] + "..."
 	}
 	prompt := fmt.Sprintf(
-		"请用50-150字概括以下文件内容的核心要点，直接输出摘要，不要其他内容。\n\n文件：%s\n\n%s",
+		"请用50-150字概括以下文件内容的核心要点，直接输出摘要，不要其他内容。\n\n文件：%s\n\n<content>\n%s\n</content>",
 		filePath, truncated,
 	)
 	return client.ChatSimple("", prompt)
