@@ -19,12 +19,14 @@ const allFilesRetrievePrompt = `你是一个文档检索助手。以下是系统
 请根据用户的问题，列出最相关的文件路径，每行一个，最多 %d 个。
 只输出文件路径，不要输出其他内容。`
 
+const maxOutlineSize = 1048576 // 1MB
+
 // HandleAllFiles handles @全部 requests with two-level retrieval:
-// 1. files_summary.xml → LLM selects relevant files
+// 1. global_files_summary.xml → LLM selects relevant files
 // 2. per-file outline → LLM selects relevant chunks
-func HandleAllFiles(client *llm.Client, jp *store.JobPaths, query string, maxRetrieve int) ([]model.Chunk, error) {
-	// 1. Read files_summary.xml
-	summaryContent := ReadFilesSummary(jp.FilesSummary)
+func HandleAllFiles(client *llm.Client, dp *store.DataPaths, query string, maxRetrieve int) ([]model.Chunk, error) {
+	// 1. Read global summary
+	summaryContent := store.ReadGlobalSummary(dp)
 	if summaryContent == "" {
 		return nil, nil
 	}
@@ -45,7 +47,7 @@ func HandleAllFiles(client *llm.Client, jp *store.JobPaths, query string, maxRet
 	// 4. Load per-file outlines for relevant files
 	var allRelevantChunks []model.Chunk
 	for _, fp := range filePaths {
-		fileOutline, err := ReadPerFileOutline(jp.OutlinesDir, fp)
+		fileOutline, err := ReadPerFileOutline(dp, fp)
 		if err != nil {
 			continue
 		}
@@ -56,7 +58,7 @@ func HandleAllFiles(client *llm.Client, jp *store.JobPaths, query string, maxRet
 		return nil, nil
 	}
 
-	// 5. Chunk-level retrieval (reuse existing function)
+	// 5. Chunk-level retrieval
 	miniOutline := &model.Outline{Chunks: allRelevantChunks}
 	selected, err := RetrieveChunks(client, miniOutline, query, maxRetrieve)
 	if err != nil {
@@ -64,6 +66,28 @@ func HandleAllFiles(client *llm.Client, jp *store.JobPaths, query string, maxRet
 	}
 
 	return selected, nil
+}
+
+// HandleAllFilesFromOutline uses global outline directly for retrieval
+// Falls back to this when global summary is empty or insufficient
+func HandleAllFilesFromOutline(client *llm.Client, dp *store.DataPaths, query string, maxRetrieve int) ([]model.Chunk, error) {
+	// Read global outline
+	outlineContent, err := store.ReadGlobalOutline(dp)
+	if err != nil || outlineContent == "" {
+		return nil, nil
+	}
+
+	// Truncate if exceeds 1MB
+	if len(outlineContent) > maxOutlineSize {
+		outlineContent = store.TrimOutlineToSize(outlineContent, maxOutlineSize)
+	}
+
+	outline := model.ParseOutline(outlineContent)
+	if len(outline.Chunks) == 0 {
+		return nil, nil
+	}
+
+	return RetrieveChunks(client, outline, query, maxRetrieve)
 }
 
 // parseRelevantFiles extracts file paths from LLM output
@@ -75,7 +99,6 @@ func parseRelevantFiles(output string) []string {
 		if line == "" {
 			continue
 		}
-		// File paths typically start with / or drive letter
 		if strings.HasPrefix(line, "/") || strings.Contains(line, ":/") || strings.Contains(line, ":\\") {
 			paths = append(paths, line)
 		}
@@ -87,18 +110,15 @@ func parseRelevantFiles(output string) []string {
 func IsFileChanged(filePath string, entry *model.FileEntry) bool {
 	info, err := os.Stat(filePath)
 	if err != nil {
-		return true // file not accessible, treat as changed
+		return true
 	}
-	// Quick check: size
 	if info.Size() != entry.Size {
 		return true
 	}
-	// Quick check: mod time
 	currentModTime := info.ModTime().Format("2006-01-02T15:04:05Z07:00")
 	if currentModTime == entry.ModTime {
 		return false
 	}
-	// Mod time changed, verify with hash
 	hash, err := store.ComputeFileHash(filePath)
 	if err != nil {
 		return true

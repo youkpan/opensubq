@@ -9,15 +9,14 @@ import (
 // Chunk represents a semantic chunk in the outline
 type Chunk struct {
 	ID        string // e.g. chunk_001
-	FilePath  string // relative path
+	FilePath  string // absolute path
 	Summary   string // 30~150 chars
 	StartLine int
 	EndLine   int
 }
 
-// Outline represents the full outline of a job
+// Outline represents the full outline
 type Outline struct {
-	JobID  string
 	Chunks []Chunk
 }
 
@@ -59,12 +58,6 @@ func (o *Outline) String() string {
 	return sb.String()
 }
 
-// Job represents a processing job
-type Job struct {
-	ID     string
-	OutDir string // job output directory
-}
-
 // ParsedPath holds extracted @path info
 type ParsedPath struct {
 	Original string // raw path from message
@@ -85,9 +78,19 @@ type FileEntry struct {
 	ModTime     string `json:"mod_time"`
 	Size        int64  `json:"size"`
 	ProcessedAt string `json:"processed_at"`
+	ChunkCount  int    `json:"chunk_count"`
+	Summary     string `json:"summary"`
 }
 
-// FileRegistry is the global file registry stored in files.json
+// FileRegistry is the global file registry stored in data/files.json
 type FileRegistry struct {
 	Files map[string]*FileEntry `json:"files"`
+}
+
+// ChatFiles tracks which files and folders are associated with a conversation
+type ChatFiles struct {
+	ConversationID string   `json:"conversation_id"`
+	Files          []string `json:"files"`
+	Folders        []string `json:"folders"`
+	UpdatedAt      string   `json:"updated_at"`
 }

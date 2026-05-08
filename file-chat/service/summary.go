@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"file-chat/llm"
@@ -33,20 +32,9 @@ func GenerateFileSummary(client *llm.Client, chunks []model.Chunk) (string, erro
 	return client.ChatSimple("", prompt)
 }
 
-// ReadFilesSummary reads files_summary.xml content
-func ReadFilesSummary(path string) string {
-	if !store.FileExists(path) {
-		return ""
-	}
-	content, err := store.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return content
-}
-
-// AppendFileSummary adds a file entry to files_summary.xml
-func AppendFileSummary(path, filePath, summary string) error {
+// AppendFileSummary adds a file entry to the global files_summary.xml
+func AppendFileSummary(dp *store.DataPaths, filePath, summary string) error {
+	path := dp.GetGlobalSummaryPath()
 	entry := fmt.Sprintf("  <file path=\"%s\">%s</file>\n", escapeXML(filePath), escapeXML(summary))
 
 	if !store.FileExists(path) {
@@ -54,20 +42,18 @@ func AppendFileSummary(path, filePath, summary string) error {
 		return store.WriteFile(path, content)
 	}
 
-	// Read existing, insert before </files>
 	content, err := store.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	// Remove old entry for this file if exists
 	content = removeFileEntry(content, filePath)
-	// Insert new entry before </files>
 	content = strings.Replace(content, "</files>", entry+"</files>", 1)
 	return store.WriteFile(path, content)
 }
 
-// RemoveFileFromSummary removes a file entry from files_summary.xml
-func RemoveFileFromSummary(path, filePath string) error {
+// RemoveFileFromSummary removes a file entry from the global files_summary.xml
+func RemoveFileFromSummary(dp *store.DataPaths, filePath string) error {
+	path := dp.GetGlobalSummaryPath()
 	if !store.FileExists(path) {
 		return nil
 	}
@@ -100,27 +86,14 @@ func escapeXML(s string) string {
 	return s
 }
 
-// CleanupFileChunks removes all data for a file from the job
-func CleanupFileChunks(jp *store.JobPaths, filePath string, outline *model.Outline) {
-	// 1. Delete chunk files
-	for _, c := range outline.Chunks {
-		if c.FilePath == filePath {
-			chunkPath := store.GetChunkFilePath(jp.Chunks, c.FilePath, c.ID)
-			os.Remove(chunkPath)
-		}
-	}
+// CleanupFileChunks removes all data for a file
+func CleanupFileChunks(dp *store.DataPaths, filePath string, outline *model.Outline) {
+	// 1. Remove chunks from global outline
+	RemoveChunksForFile(dp, filePath, outline)
 
-	// 2. Rewrite global outline without this file's chunks
-	RemoveChunksForFile(jp.Outline, filePath, outline)
+	// 2. Remove from global summary
+	RemoveFileFromSummary(dp, filePath)
 
-	// 3. Delete per-file outline
-	perFilePath := store.GetPerFileOutlinePath(jp.OutlinesDir, filePath)
-	os.Remove(perFilePath)
-
-	// 4. Remove from files_summary.xml
-	RemoveFileFromSummary(jp.FilesSummary, filePath)
-
-	// 5. Delete source file
-	sourcePath := store.GetSourceFilePath(jp.Sources, filePath)
-	os.Remove(sourcePath)
+	// 3. Delete the entire file storage directory
+	dp.DeleteFileDir(filePath)
 }

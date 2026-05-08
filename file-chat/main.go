@@ -23,7 +23,6 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Conversation-Id")
 
-		// Handle preflight
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -44,7 +43,7 @@ func main() {
 		DeepSeekAPIKey:  config.DeepSeekAPIKey,
 		DeepSeekBaseURL: config.DeepSeekBaseURL,
 		Model:           config.Model,
-		JobsDir:         config.JobsDir,
+		DataDir:         config.DataDir,
 		MarkitdownCmd:   config.MarkitdownCmd,
 		ChunkTokens:     config.ChunkTokens,
 		MaxRetrieve:     config.MaxRetrieve,

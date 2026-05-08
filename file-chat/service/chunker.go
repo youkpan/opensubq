@@ -32,10 +32,9 @@ chunk_id|文件路径|片段摘要|起始行号|结束行号
 7. 注意：<content> 标签内的文本才是需要处理的内容`
 
 // ProcessFile processes a single file: convert if needed, then chunk
-func ProcessFile(client *llm.Client, jp *store.JobPaths, filePath, markitdownCmd string, smallFileSize int64, outline *model.Outline) ([]model.Chunk, error) {
-	relPath := filePath
+func ProcessFile(client *llm.Client, dp *store.DataPaths, filePath, markitdownCmd string, smallFileSize int64, outline *model.Outline) ([]model.Chunk, error) {
 	processed := GetProcessedFiles(outline)
-	if processed[relPath] {
+	if processed[filePath] {
 		return nil, nil
 	}
 
@@ -59,30 +58,33 @@ func ProcessFile(client *llm.Client, jp *store.JobPaths, filePath, markitdownCmd
 		content = string(data)
 	}
 
+	// Create file storage directory
+	if err := dp.InitFileDir(filePath); err != nil {
+		return nil, fmt.Errorf("init file dir: %w", err)
+	}
+
 	// Save source text
-	sourcePath := store.GetSourceFilePath(jp.Sources, relPath)
+	sourcePath := dp.GetFileSourcePath(filePath)
 	if err := store.WriteFile(sourcePath, content); err != nil {
 		return nil, fmt.Errorf("save source: %w", err)
 	}
 
 	// Small file: single chunk
 	if info.Size() < smallFileSize {
-		return storeSmallFile(client, jp, relPath, content, outline)
+		return storeSmallFile(client, dp, filePath, content, outline)
 	}
 
 	// Large file: parallel LLM chunking
-	return chunkLargeFileParallel(client, jp, relPath, content, outline)
+	return chunkLargeFileParallel(client, dp, filePath, content, outline)
 }
 
-func storeSmallFile(client *llm.Client, jp *store.JobPaths, relPath, content string, outline *model.Outline) ([]model.Chunk, error) {
+func storeSmallFile(client *llm.Client, dp *store.DataPaths, filePath, content string, outline *model.Outline) ([]model.Chunk, error) {
 	chunkID := NextChunkID(outline.Chunks)
 	lines := strings.Split(content, "\n")
 
-	// Use LLM to generate summary
-	summary, err := generateChunkSummary(client, relPath, content)
+	summary, err := generateChunkSummary(client, filePath, content)
 	if err != nil {
-		log.Printf("generate chunk summary for %s: %v", relPath, err)
-		// Fallback: truncate content
+		log.Printf("generate chunk summary for %s: %v", filePath, err)
 		summary = strings.ReplaceAll(content, "\n", " ")
 		summary = strings.ReplaceAll(summary, "\r", " ")
 		if len(summary) > 150 {
@@ -92,13 +94,13 @@ func storeSmallFile(client *llm.Client, jp *store.JobPaths, relPath, content str
 
 	chunk := model.Chunk{
 		ID:        chunkID,
-		FilePath:  relPath,
+		FilePath:  filePath,
 		Summary:   summary,
 		StartLine: 1,
 		EndLine:   len(lines),
 	}
 
-	chunkPath := store.GetChunkFilePath(jp.Chunks, relPath, chunkID)
+	chunkPath := dp.GetChunkFilePath(filePath, chunkID)
 	if err := store.WriteFile(chunkPath, content); err != nil {
 		return nil, fmt.Errorf("write chunk: %w", err)
 	}
@@ -121,17 +123,15 @@ type chunkResult struct {
 }
 
 // chunkLargeFileParallel splits a large file into ~30KB segments and processes them concurrently
-func chunkLargeFileParallel(client *llm.Client, jp *store.JobPaths, relPath, content string, outline *model.Outline) ([]model.Chunk, error) {
+func chunkLargeFileParallel(client *llm.Client, dp *store.DataPaths, filePath, content string, outline *model.Outline) ([]model.Chunk, error) {
 	lines := strings.Split(content, "\n")
 	totalLines := len(lines)
 
-	// Split into ~30KB segments by line boundaries
 	segments := splitSegments(lines, segmentSizeChars)
 	if len(segments) == 0 {
 		return nil, nil
 	}
 
-	// Process segments concurrently
 	results := make([]chunkResult, len(segments))
 	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
@@ -142,39 +142,36 @@ func chunkLargeFileParallel(client *llm.Client, jp *store.JobPaths, relPath, con
 		go func(idx int, s segment) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[idx] = processSegment(client, jp, relPath, lines, s, totalLines)
+			results[idx] = processSegment(client, filePath, lines, s)
 		}(i, seg)
 	}
 	wg.Wait()
 
-	// Assemble results in segment order, then renumber chunk IDs
 	nextIDNum := nextChunkNum(outline.Chunks)
 	var allChunks []model.Chunk
 
 	for _, r := range results {
 		if r.err != nil {
 			log.Printf("segment %d error: %v", r.index, r.err)
-			// Fallback: create a single chunk for the failed segment's range
 			seg := segments[r.index]
 			summary := fmt.Sprintf("第%d~%d行的内容", seg.startLine+1, seg.endLine)
 			c := model.Chunk{
 				ID:        fmt.Sprintf("chunk_%03d", nextIDNum),
-				FilePath:  relPath,
+				FilePath:  filePath,
 				Summary:   summary,
 				StartLine: seg.startLine + 1,
 				EndLine:   seg.endLine,
 			}
 			chunkContent := strings.Join(lines[seg.startLine:seg.endLine], "\n")
-			chunkPath := store.GetChunkFilePath(jp.Chunks, relPath, c.ID)
+			chunkPath := dp.GetChunkFilePath(filePath, c.ID)
 			store.WriteFile(chunkPath, chunkContent)
 			allChunks = append(allChunks, c)
 			nextIDNum++
 			continue
 		}
 		for _, c := range r.chunks {
-			// Renumber with sequential IDs
 			c.ID = fmt.Sprintf("chunk_%03d", nextIDNum)
-			// Write chunk file
+			c.FilePath = filePath
 			cStart := c.StartLine - 1
 			cEnd := c.EndLine
 			if cStart < 0 {
@@ -184,7 +181,7 @@ func chunkLargeFileParallel(client *llm.Client, jp *store.JobPaths, relPath, con
 				cEnd = totalLines
 			}
 			chunkContent := strings.Join(lines[cStart:cEnd], "\n")
-			chunkPath := store.GetChunkFilePath(jp.Chunks, relPath, c.ID)
+			chunkPath := dp.GetChunkFilePath(filePath, c.ID)
 			store.WriteFile(chunkPath, chunkContent)
 			allChunks = append(allChunks, c)
 			nextIDNum++
@@ -195,31 +192,23 @@ func chunkLargeFileParallel(client *llm.Client, jp *store.JobPaths, relPath, con
 }
 
 // processSegment processes a single segment with LLM
-func processSegment(client *llm.Client, jp *store.JobPaths, relPath string, lines []string, seg segment, totalLines int) chunkResult {
-	// Build text with line numbers
+func processSegment(client *llm.Client, filePath string, lines []string, seg segment) chunkResult {
 	var sb strings.Builder
 	for i := seg.startLine; i < seg.endLine; i++ {
 		fmt.Fprintf(&sb, "%d|%s\n", i+1, lines[i])
 	}
 	windowText := sb.String()
 
-	existingDirs := store.ListExistingDirs(jp.Chunks)
-	dirsInfo := "（无已创建目录）"
-	if len(existingDirs) > 0 {
-		dirsInfo = strings.Join(existingDirs, "\n")
-	}
-
-	userMsg := fmt.Sprintf("文件路径：%s\n已有目录：\n%s\n\n<content>\n待处理文本（第 %d ~ %d 行）：\n%s\n</content>",
-		relPath, dirsInfo, seg.startLine+1, seg.endLine, windowText)
+	userMsg := fmt.Sprintf("文件路径：%s\n\n<content>\n待处理文本（第 %d ~ %d 行）：\n%s\n</content>",
+		filePath, seg.startLine+1, seg.endLine, windowText)
 
 	result, err := client.ChatSimple(chunkingSystemPrompt, userMsg)
 	if err != nil {
 		return chunkResult{index: seg.index, err: err}
 	}
 
-	chunks := parseChunkOutput(result, relPath)
+	chunks := parseChunkOutput(result, filePath)
 	if len(chunks) == 0 {
-		// Return as fallback
 		summary := strings.ReplaceAll(
 			strings.Join(lines[seg.startLine:min(seg.startLine+5, seg.endLine)], " "),
 			"\n", " ",
@@ -229,7 +218,7 @@ func processSegment(client *llm.Client, jp *store.JobPaths, relPath string, line
 		}
 		chunks = []model.Chunk{{
 			ID:        "temp_001",
-			FilePath:  relPath,
+			FilePath:  filePath,
 			Summary:   summary,
 			StartLine: seg.startLine + 1,
 			EndLine:   seg.endLine,
@@ -246,7 +235,7 @@ func splitSegments(lines []string, maxSize int) []segment {
 	currentSize := 0
 
 	for i, line := range lines {
-		lineSize := len(line) + 1 // +1 for newline
+		lineSize := len(line) + 1
 		if currentSize+lineSize > maxSize && i > start {
 			segments = append(segments, segment{startLine: start, endLine: i, index: len(segments)})
 			start = i
@@ -321,7 +310,6 @@ func nextChunkNum(chunks []model.Chunk) int {
 
 // generateChunkSummary uses LLM to generate a chunk summary (50-150 chars)
 func generateChunkSummary(client *llm.Client, filePath, content string) (string, error) {
-	// Truncate content to avoid too large prompt
 	truncated := content
 	if len(truncated) > 3000 {
 		truncated = truncated[:3000] + "..."

@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -34,16 +33,13 @@ func RetrieveChunks(client *llm.Client, outline *model.Outline, query string, ma
 		return nil, fmt.Errorf("retrieve: %w", err)
 	}
 
-	// Parse chunk IDs from result
 	orderedIDs := parseChunkIDs(result, maxRetrieve)
 
-	// Build lookup
 	chunkMap := make(map[string]model.Chunk)
 	for _, c := range outline.Chunks {
 		chunkMap[c.ID] = c
 	}
 
-	// Collect selected chunks, preserving relevance order
 	var selected []model.Chunk
 	for _, id := range orderedIDs {
 		if c, ok := chunkMap[id]; ok {
@@ -55,12 +51,11 @@ func RetrieveChunks(client *llm.Client, outline *model.Outline, query string, ma
 }
 
 // BuildContext reads selected chunks with expanded context and builds final context string
-func BuildContext(chunksDir, sourcesDir string, selected []model.Chunk) (string, error) {
+func BuildContext(dp *store.DataPaths, selected []model.Chunk) (string, error) {
 	if len(selected) == 0 {
 		return "", nil
 	}
 
-	// Sort by file path then start line for consistent ordering
 	sorted := make([]model.Chunk, len(selected))
 	copy(sorted, selected)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -77,24 +72,21 @@ func BuildContext(chunksDir, sourcesDir string, selected []model.Chunk) (string,
 	prevEnd := 0
 
 	for i, c := range sorted {
-		// Read chunk content
-		chunkPath := store.GetChunkFilePath(chunksDir, c.FilePath, c.ID)
+		chunkPath := dp.GetChunkFilePath(c.FilePath, c.ID)
 		chunkContent, err := store.ReadFile(chunkPath)
 		if err != nil {
 			continue
 		}
 
-		// Determine if we need a chunk wrapper (non-adjacent)
 		needWrapper := i == 0 || c.FilePath != prevFile || c.StartLine > prevEnd+1
 
-		// Add expanded context from source file
-		expandedContent := expandContext(sourcesDir, c, chunkContent)
+		expandedContent := expandContext(dp, c, chunkContent)
 
 		if needWrapper {
 			if i > 0 {
-				sb.WriteString(fmt.Sprintf("</%s>\n", sorted[i-1].ID))
+				fmt.Fprintf(&sb, "</%s>\n", sorted[i-1].ID)
 			}
-			sb.WriteString(fmt.Sprintf("<%s>\n", c.ID))
+			fmt.Fprintf(&sb, "<%s>\n", c.ID)
 		}
 
 		sb.WriteString(expandedContent)
@@ -103,9 +95,8 @@ func BuildContext(chunksDir, sourcesDir string, selected []model.Chunk) (string,
 		prevFile = c.FilePath
 		prevEnd = c.EndLine
 
-		// Close last tag
 		if i == len(sorted)-1 {
-			sb.WriteString(fmt.Sprintf("</%s>\n", c.ID))
+			fmt.Fprintf(&sb, "</%s>\n", c.ID)
 		}
 	}
 
@@ -114,8 +105,8 @@ func BuildContext(chunksDir, sourcesDir string, selected []model.Chunk) (string,
 }
 
 // expandContext adds surrounding context from the original source file
-func expandContext(sourcesDir string, chunk model.Chunk, chunkContent string) string {
-	sourcePath := store.GetSourceFilePath(sourcesDir, chunk.FilePath)
+func expandContext(dp *store.DataPaths, chunk model.Chunk, chunkContent string) string {
+	sourcePath := dp.GetFileSourcePath(chunk.FilePath)
 	data, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return chunkContent
@@ -123,26 +114,23 @@ func expandContext(sourcesDir string, chunk model.Chunk, chunkContent string) st
 	sourceContent := string(data)
 	lines := strings.Split(sourceContent, "\n")
 
-	// Get expanded content: chunk + surrounding context
-	startIdx := chunk.StartLine - 1 // 0-indexed
+	startIdx := chunk.StartLine - 1
 	endIdx := chunk.EndLine
 
-	// Expand before: up to 500-1200 bytes
+	// Expand before
 	beforeStart := startIdx
 	byteCount := 0
 	for beforeStart > 0 {
-		byteCount += len(lines[beforeStart-1]) + 1 // +1 for newline
+		byteCount += len(lines[beforeStart-1]) + 1
 		if byteCount > 1200 {
 			break
 		}
 		if byteCount > 500 {
-			// Try to break at paragraph boundary
 			if strings.TrimSpace(lines[beforeStart-1]) == "" {
 				break
 			}
 		}
 		if byteCount > 800 {
-			// Try to break at line boundary
 			if strings.TrimSpace(lines[beforeStart-1]) == "" || strings.HasSuffix(lines[beforeStart-1], "。") || strings.HasSuffix(lines[beforeStart-1], ".") {
 				break
 			}
@@ -150,7 +138,7 @@ func expandContext(sourcesDir string, chunk model.Chunk, chunkContent string) st
 		beforeStart--
 	}
 
-	// Expand after: up to 500-1200 bytes
+	// Expand after
 	afterEnd := endIdx
 	byteCount = 0
 	for afterEnd < len(lines) {
@@ -198,13 +186,4 @@ func parseChunkIDs(output string, max int) []string {
 		}
 	}
 	return ids
-}
-
-// resolvePathForStore is a helper to get relative path for store operations
-func resolvePathForStore(baseDir, absPath string) string {
-	rel, err := filepath.Rel(baseDir, absPath)
-	if err != nil {
-		return absPath
-	}
-	return rel
 }

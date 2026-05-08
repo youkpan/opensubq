@@ -11,9 +11,9 @@ import (
 	"file-chat/model"
 )
 
-// ReadFileRegistry reads files.json, returns empty registry if not exists
-func ReadFileRegistry(jobsDir string) (*model.FileRegistry, error) {
-	path := filepath.Join(jobsDir, "files.json")
+// ReadFileRegistry reads files.json from the data directory
+func ReadFileRegistry(dp *DataPaths) (*model.FileRegistry, error) {
+	path := dp.GetRegistryPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -31,12 +31,15 @@ func ReadFileRegistry(jobsDir string) (*model.FileRegistry, error) {
 	return &reg, nil
 }
 
-// WriteFileRegistry writes files.json
-func WriteFileRegistry(jobsDir string, reg *model.FileRegistry) error {
-	path := filepath.Join(jobsDir, "files.json")
+// WriteFileRegistry writes files.json to the data directory
+func WriteFileRegistry(dp *DataPaths, reg *model.FileRegistry) error {
+	path := dp.GetRegistryPath()
 	data, err := json.MarshalIndent(reg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal files.json: %w", err)
+	}
+	if err := EnsureDir(filepath.Dir(path)); err != nil {
+		return err
 	}
 	return os.WriteFile(path, data, 0644)
 }

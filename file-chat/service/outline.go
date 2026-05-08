@@ -9,7 +9,7 @@ import (
 	"file-chat/store"
 )
 
-// ReadOutline reads and parses the outline file for a job
+// ReadOutline reads and parses an outline file
 func ReadOutline(outlinePath string) (*model.Outline, error) {
 	if !store.FileExists(outlinePath) {
 		return &model.Outline{}, nil
@@ -21,11 +21,20 @@ func ReadOutline(outlinePath string) (*model.Outline, error) {
 	return model.ParseOutline(content), nil
 }
 
-// AppendChunks appends chunk records to the outline file
+// ReadGlobalOutline reads and parses the global outline
+func ReadGlobalOutline(dp *store.DataPaths) (*model.Outline, error) {
+	content, err := store.ReadGlobalOutline(dp)
+	if err != nil {
+		return &model.Outline{}, nil
+	}
+	return model.ParseOutline(content), nil
+}
+
+// AppendChunks appends chunk records to a file
 func AppendChunks(outlinePath string, chunks []model.Chunk) error {
 	var sb strings.Builder
 	for _, c := range chunks {
-		sb.WriteString(fmt.Sprintf("%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine))
+		fmt.Fprintf(&sb, "%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine)
 	}
 	f, err := store.OpenAppend(outlinePath)
 	if err != nil {
@@ -34,6 +43,15 @@ func AppendChunks(outlinePath string, chunks []model.Chunk) error {
 	defer f.Close()
 	_, err = f.WriteString(sb.String())
 	return err
+}
+
+// AppendChunksToGlobalOutline appends chunks to the global outline
+func AppendChunksToGlobalOutline(dp *store.DataPaths, chunks []model.Chunk) error {
+	var sb strings.Builder
+	for _, c := range chunks {
+		fmt.Fprintf(&sb, "%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine)
+	}
+	return store.AppendToGlobalOutline(dp, sb.String())
 }
 
 // NextChunkID generates the next chunk ID based on existing chunks
@@ -58,27 +76,27 @@ func GetProcessedFiles(outline *model.Outline) map[string]bool {
 }
 
 // WritePerFileOutline writes chunks for a single file to its own outline file
-func WritePerFileOutline(outlinesDir string, chunks []model.Chunk) error {
+func WritePerFileOutline(dp *store.DataPaths, chunks []model.Chunk) error {
 	if len(chunks) == 0 {
 		return nil
 	}
 	filePath := chunks[0].FilePath
-	path := store.GetPerFileOutlinePath(outlinesDir, filePath)
+	path := dp.GetFileOutlinePath(filePath)
 	var sb strings.Builder
 	for _, c := range chunks {
-		sb.WriteString(fmt.Sprintf("%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine))
+		fmt.Fprintf(&sb, "%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine)
 	}
 	return store.WriteFile(path, sb.String())
 }
 
 // ReadPerFileOutline reads the outline for a specific file
-func ReadPerFileOutline(outlinesDir, filePath string) (*model.Outline, error) {
-	path := store.GetPerFileOutlinePath(outlinesDir, filePath)
+func ReadPerFileOutline(dp *store.DataPaths, filePath string) (*model.Outline, error) {
+	path := dp.GetFileOutlinePath(filePath)
 	return ReadOutline(path)
 }
 
 // RemoveChunksForFile removes all chunks for a file from the global outline
-func RemoveChunksForFile(outlinePath, filePath string, outline *model.Outline) error {
+func RemoveChunksForFile(dp *store.DataPaths, filePath string, outline *model.Outline) error {
 	var remaining []model.Chunk
 	for _, c := range outline.Chunks {
 		if c.FilePath != filePath {
@@ -86,5 +104,5 @@ func RemoveChunksForFile(outlinePath, filePath string, outline *model.Outline) e
 		}
 	}
 	outline.Chunks = remaining
-	return store.WriteFile(outlinePath, outline.String())
+	return store.WriteGlobalOutline(dp, outline.String())
 }

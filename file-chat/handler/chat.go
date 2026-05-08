@@ -19,7 +19,7 @@ type AppConfig struct {
 	DeepSeekAPIKey  string
 	DeepSeekBaseURL string
 	Model           string
-	JobsDir         string
+	DataDir         string
 	MarkitdownCmd   string
 	ChunkTokens     int
 	MaxRetrieve     int
@@ -33,7 +33,7 @@ func ChatHandler(cfg AppConfig) http.HandlerFunc {
 		APIKey:  cfg.DeepSeekAPIKey,
 		Model:   cfg.Model,
 	}
-	chatSvc := service.NewChatService(client, cfg.JobsDir, cfg.MarkitdownCmd, cfg.ChunkTokens, cfg.MaxRetrieve, cfg.SmallFileSize)
+	chatSvc := service.NewChatService(client, cfg.DataDir, cfg.MarkitdownCmd, cfg.ChunkTokens, cfg.MaxRetrieve, cfg.SmallFileSize)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
@@ -59,7 +59,6 @@ func ChatHandler(cfg AppConfig) http.HandlerFunc {
 		finalMessages, err := chatSvc.ProcessRequest(req.Messages, conversationID)
 		if err != nil {
 			log.Printf("process request error: %v", err)
-			// Fall through with original messages
 			finalMessages = convertMessages(req.Messages)
 		}
 
@@ -84,7 +83,6 @@ func handleStream(w http.ResponseWriter, client *llm.Client, model string, messa
 
 	chunkID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 
-	// Build request body for DeepSeek
 	reqBody := map[string]interface{}{
 		"model":       model,
 		"messages":    messages,
@@ -92,11 +90,9 @@ func handleStream(w http.ResponseWriter, client *llm.Client, model string, messa
 		"temperature": 1,
 	}
 
-	// Proxy the stream
 	_, err = llm.ProxyStream(client.BaseURL, client.APIKey, reqBody, sw)
 	if err != nil {
 		log.Printf("proxy stream error: %v", err)
-		// Send error as SSE
 		errorChunk := apimodel.SSEChunk{
 			ID:      chunkID,
 			Object:  "chat.completion.chunk",
@@ -129,11 +125,9 @@ func convertMessages(msgs []apimodel.Message) []llm.ChatMessage {
 	result := make([]llm.ChatMessage, len(msgs))
 	for i, m := range msgs {
 		content := m.Content
-		// Handle multimodal content
 		if content == "" && m.Content == "" {
 			// skip empty
 		}
-		// Clean @paths from content
 		content = service.CleanPaths(content)
 		result[i] = llm.ChatMessage{
 			Role:    m.Role,
@@ -145,7 +139,6 @@ func convertMessages(msgs []apimodel.Message) []llm.ChatMessage {
 
 // extractTextFromContent extracts plain text from possibly multimodal content
 func extractTextFromContent(content string) string {
-	// If content is JSON array (multimodal), extract text parts
 	if strings.HasPrefix(content, "[") {
 		var parts []struct {
 			Type string `json:"type"`

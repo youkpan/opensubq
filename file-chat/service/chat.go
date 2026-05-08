@@ -16,17 +16,17 @@ import (
 
 type ChatService struct {
 	Client        *llm.Client
-	JobsDir       string
+	DataDir       string
 	MarkitdownCmd string
 	ChunkTokens   int
 	MaxRetrieve   int
 	SmallFileSize int64
 }
 
-func NewChatService(client *llm.Client, jobsDir, markitdownCmd string, chunkTokens, maxRetrieve int, smallFileSize int64) *ChatService {
+func NewChatService(client *llm.Client, dataDir, markitdownCmd string, chunkTokens, maxRetrieve int, smallFileSize int64) *ChatService {
 	return &ChatService{
 		Client:        client,
-		JobsDir:       jobsDir,
+		DataDir:       dataDir,
 		MarkitdownCmd: markitdownCmd,
 		ChunkTokens:   chunkTokens,
 		MaxRetrieve:   maxRetrieve,
@@ -45,20 +45,19 @@ type fileTask struct {
 func (s *ChatService) ProcessRequest(messages []model.Message, conversationID string) ([]llm.ChatMessage, error) {
 	startTime := time.Now()
 
-	// 1. Determine job ID
-	jobID := conversationID
-	if jobID == "" {
+	// 1. Determine conversation ID
+	if conversationID == "" {
 		for _, m := range messages {
 			if m.Role == "user" {
-				jobID = fmt.Sprintf("%x", md5.Sum([]byte(m.Content)))[:6]
+				conversationID = fmt.Sprintf("%x", md5.Sum([]byte(m.Content)))[:6]
 				break
 			}
 		}
 	}
-	if jobID == "" {
-		jobID = "default"
+	if conversationID == "" {
+		conversationID = "default"
 	}
-	log.Printf("[Step 1] jobID=%s", jobID)
+	log.Printf("[Step 1] conversationID=%s", conversationID)
 
 	// 2. Extract @paths and @全部
 	var allPaths []string
@@ -83,26 +82,26 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		return cleanMessages, nil
 	}
 
-	// 3. Init job
-	jp, err := store.InitJob(s.JobsDir, jobID)
+	// 3. Initialize data directory
+	dp, err := store.InitDataDir(s.DataDir)
 	if err != nil {
-		return nil, fmt.Errorf("init job: %w", err)
+		return nil, fmt.Errorf("init data dir: %w", err)
 	}
-	log.Printf("[Step 3] 初始化 job: %s", jp.Root)
+	log.Printf("[Step 3] 初始化数据目录: %s", dp.DataDir)
 
-	// 4. Load registry and outline
-	registry, err := store.ReadFileRegistry(s.JobsDir)
+	// 4. Load global registry and outline
+	registry, err := store.ReadFileRegistry(dp)
 	if err != nil {
 		log.Printf("read registry: %v", err)
 		registry = &model.FileRegistry{Files: make(map[string]*model.FileEntry)}
 	}
-	log.Printf("[Step 4] 加载注册表: 已有 %d 个文件, 已有 %d 条记录", len(registry.Files), len(registry.Files))
+	log.Printf("[Step 4] 加载注册表: %d 个文件", len(registry.Files))
 
-	outline, err := ReadOutline(jp.Outline)
+	outline, err := ReadGlobalOutline(dp)
 	if err != nil {
-		return nil, fmt.Errorf("read outline: %w", err)
+		return nil, fmt.Errorf("read global outline: %w", err)
 	}
-	log.Printf("[Step 4] 加载大纲: %d 个已有 chunks", len(outline.Chunks))
+	log.Printf("[Step 4] 加载全局大纲: %d 个已有 chunks", len(outline.Chunks))
 
 	// 5. Resolve all paths to file lists, filter unchanged
 	var filesToProcess []string
@@ -118,6 +117,8 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		if isDir {
 			files = ListFiles(absPath)
 			log.Printf("[Step 5] 目录解析: %s → %d 个文件", absPath, len(files))
+			// Track folder in chat-files.json
+			store.AddFolderToChat(dp, conversationID, absPath)
 		} else {
 			files = []string{absPath}
 		}
@@ -126,17 +127,35 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 			entry := registry.Files[f]
 			if entry != nil && !IsFileChanged(f, entry) {
 				filesSkipped = append(filesSkipped, f)
-				continue // unchanged, skip
+				continue
 			}
 			// File changed: cleanup old data
 			if entry != nil {
 				log.Printf("[Step 5] 文件已变更，重新处理: %s", f)
-				CleanupFileChunks(jp, f, outline)
-				outline, _ = ReadOutline(jp.Outline)
+				store.WithFileLock(f, func() error {
+					CleanupFileChunks(dp, f, outline)
+					outline, _ = ReadGlobalOutline(dp)
+					return nil
+				})
 			}
 			filesToProcess = append(filesToProcess, f)
 		}
 	}
+
+	// @全部: also include files from registry that this conversation hasn't referenced yet
+	if hasAll {
+		chatFiles, _ := store.ReadChatFiles(dp, conversationID)
+		chatFileSet := make(map[string]bool)
+		for _, f := range chatFiles.Files {
+			chatFileSet[f] = true
+		}
+		for f := range registry.Files {
+			if !chatFileSet[f] {
+				filesSkipped = append(filesSkipped, f)
+			}
+		}
+	}
+
 	log.Printf("[Step 5] 文件清单: 待处理=%d, 跳过(未变更)=%d", len(filesToProcess), len(filesSkipped))
 	for _, f := range filesToProcess {
 		log.Printf("[Step 5]   待处理: %s", f)
@@ -160,10 +179,18 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 				defer wg.Done()
 				defer func() { <-sem }()
 				fileStart := time.Now()
-				chunks, err := ProcessFile(s.Client, jp, filePath, s.MarkitdownCmd, s.SmallFileSize, outline)
+				var chunks []model.Chunk
+				var procErr error
+				lockErr := store.WithFileLock(filePath, func() error {
+					chunks, procErr = ProcessFile(s.Client, dp, filePath, s.MarkitdownCmd, s.SmallFileSize, outline)
+					return nil
+				})
+				if lockErr != nil {
+					procErr = lockErr
+				}
 				elapsed := time.Since(fileStart)
-				if err != nil {
-					log.Printf("[Step 6]   文件处理失败 [%s]: %v (%.1fs)", filePath, err, elapsed.Seconds())
+				if procErr != nil {
+					log.Printf("[Step 6]   文件处理失败 [%s]: %v (%.1fs)", filePath, procErr, elapsed.Seconds())
 				} else {
 					ids := make([]string, len(chunks))
 					for i, c := range chunks {
@@ -171,20 +198,17 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 					}
 					log.Printf("[Step 6]   文件处理完成 [%s]: %d chunks %v (%.1fs)", filePath, len(chunks), ids, elapsed.Seconds())
 				}
-				tasks[idx] = fileTask{filePath: filePath, chunks: chunks, err: err}
+				tasks[idx] = fileTask{filePath: filePath, chunks: chunks, err: procErr}
 			}(i, f)
 		}
 		wg.Wait()
 		log.Printf("[Step 6] 并行处理完成 (%.1fs)", time.Since(processStart).Seconds())
 
-		// 7. Sequential: assemble results into outline + registry
-		log.Printf("[Step 7] 组装结果: outline + per-file outline + summary + registry")
+		// 7. Sequential: assemble results into global outline + registry
+		log.Printf("[Step 7] 组装结果: global outline + per-file outline + summary + registry")
 		registryChanged := false
 		for _, t := range tasks {
-			if t.err != nil {
-				continue
-			}
-			if len(t.chunks) == 0 {
+			if t.err != nil || len(t.chunks) == 0 {
 				continue
 			}
 
@@ -195,14 +219,14 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 			log.Printf("[Step 7]   组装: %s → chunks %v", t.filePath, ids)
 
 			// Append to global outline
-			if err := AppendChunks(jp.Outline, t.chunks); err != nil {
-				log.Printf("append chunks: %v", err)
+			if err := AppendChunksToGlobalOutline(dp, t.chunks); err != nil {
+				log.Printf("append chunks to global outline: %v", err)
 				continue
 			}
 			outline.Chunks = append(outline.Chunks, t.chunks...)
 
 			// Write per-file outline
-			if err := WritePerFileOutline(jp.OutlinesDir, t.chunks); err != nil {
+			if err := WritePerFileOutline(dp, t.chunks); err != nil {
 				log.Printf("write per-file outline: %v", err)
 			}
 
@@ -213,7 +237,7 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 				summary = fmt.Sprintf("文件 %s 的内容", t.filePath)
 			}
 			log.Printf("[Step 7]   摘要: %s → %s", t.filePath, summary)
-			if err := AppendFileSummary(jp.FilesSummary, t.filePath, summary); err != nil {
+			if err := AppendFileSummary(dp, t.filePath, summary); err != nil {
 				log.Printf("append file summary: %v", err)
 			}
 
@@ -226,22 +250,27 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 				ModTime:     modTime,
 				Size:        size,
 				ProcessedAt: time.Now().Format("2006-01-02T15:04:05Z07:00"),
+				ChunkCount:  len(t.chunks),
+				Summary:     summary,
 			}
 			registryChanged = true
+
+			// Add file to chat-files.json
+			store.AddFileToChat(dp, conversationID, t.filePath)
 		}
 
 		if registryChanged {
-			store.WriteFileRegistry(s.JobsDir, registry)
+			store.WriteFileRegistry(dp, registry)
 			log.Printf("[Step 7] 注册表已更新: %d 个文件", len(registry.Files))
 		}
 	}
 
 	// 8. Reload outline for retrieval
-	outline, err = ReadOutline(jp.Outline)
+	outline, err = ReadGlobalOutline(dp)
 	if err != nil {
 		return nil, fmt.Errorf("reload outline: %w", err)
 	}
-	log.Printf("[Step 8] 重载大纲: %d 个 chunks", len(outline.Chunks))
+	log.Printf("[Step 8] 重载全局大纲: %d 个 chunks", len(outline.Chunks))
 
 	if len(outline.Chunks) == 0 {
 		log.Printf("[Step 8] 大纲为空，透传请求")
@@ -262,12 +291,19 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 	log.Printf("[Step 10] 开始检索 (hasAll=%v, maxRetrieve=%d)", hasAll, s.MaxRetrieve)
 	var selected []model.Chunk
 	if hasAll {
-		selected, err = HandleAllFiles(s.Client, jp, query, s.MaxRetrieve)
+		// Try two-level retrieval first (summary → outline)
+		selected, err = HandleAllFiles(s.Client, dp, query, s.MaxRetrieve)
 		if err != nil {
-			log.Printf("[Step 10] @全部检索失败: %v", err)
-		} else {
-			log.Printf("[Step 10] @全部检索: %d 个 chunks", len(selected))
+			log.Printf("[Step 10] @全部两级检索失败: %v", err)
 		}
+		// Fallback to direct outline retrieval
+		if len(selected) == 0 {
+			selected, err = HandleAllFilesFromOutline(s.Client, dp, query, s.MaxRetrieve)
+			if err != nil {
+				log.Printf("[Step 10] @全部大纲检索失败: %v", err)
+			}
+		}
+		log.Printf("[Step 10] @全部检索: %d 个 chunks", len(selected))
 	}
 	if len(selected) == 0 && len(allPaths) > 0 {
 		selected, err = RetrieveChunks(s.Client, outline, query, s.MaxRetrieve)
@@ -288,7 +324,7 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 	log.Printf("[Step 10] 选中 chunks: %v", selectedIDs)
 
 	// 11. Build context
-	context, err := BuildContext(jp.Chunks, jp.Sources, selected)
+	context, err := BuildContext(dp, selected)
 	if err != nil {
 		log.Printf("[Step 11] 构建上下文失败: %v", err)
 		return cleanMessages, nil

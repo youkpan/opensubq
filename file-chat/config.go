@@ -10,7 +10,7 @@ type Config struct {
 	DeepSeekBaseURL string
 	Model           string
 	Port            string
-	JobsDir         string
+	DataDir         string
 	MarkitdownCmd   string
 	ChunkTokens     int
 	MaxRetrieve     int
@@ -23,7 +23,7 @@ func LoadConfig() *Config {
 		DeepSeekBaseURL: getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 		Model:           getEnv("MODEL", "deepseek-v4-flash"),
 		Port:            getEnv("PORT", "8080"),
-		JobsDir:         getEnv("JOBS_DIR", "./jobs"),
+		DataDir:         getEnv("DATA_DIR", "./data"),
 		MarkitdownCmd:   getEnv("MARKITDOWN_CMD", "markitdown"),
 		ChunkTokens:     getEnvInt("CHUNK_TOKENS", 2000),
 		MaxRetrieve:     getEnvInt("MAX_RETRIEVE", 20),
