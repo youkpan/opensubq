@@ -93,7 +93,7 @@ chunk_002|F:\github\data\report.pdf|关于Q4市场展望的策略|51|120
 
 | 字段 | 说明 |
 |------|------|
-| chunk_id | 片段唯一标识（chunk_NNN，全局递增） |
+| chunk_id | 片段唯一标识（chunk_NNN，全局递增，无后缀） |
 | file_path | 文件绝对路径 |
 | summary | LLM 生成的片段摘要（50~150字） |
 | start_line | 起始行号 |
@@ -143,12 +143,22 @@ chunk_002|F:\github\data\report.pdf|关于Q4市场展望的策略|51|120
 ### 3.6 核心类型
 
 ```go
+type ChunkMeta struct {
+    ID        string // chunk_001（简单递增，无后缀）
+    StartByte int64  // 起始字节偏移
+    EndByte   int64  // 结束字节偏移（不含）
+    Head30    string // 前30字节指纹（hex）
+    Tail30    string // 后30字节指纹（hex）
+    Hash      string // 内容 MD5
+    Summary   string // 30~150字摘要
+}
+
 type Chunk struct {
     ID        string // chunk_001（全局唯一）
     FilePath  string // 绝对路径
     Summary   string // LLM 生成的摘要
-    StartLine int
-    EndLine   int
+    StartByte int64
+    EndByte   int64
 }
 
 type Outline struct {
@@ -249,9 +259,11 @@ SafeFileName: F__github_data_report.pdf
     │
     ├─ 3. 等待全部完成
     │
-    ├─ 4. 按段顺序拼接，统一重编号 chunk ID（全局递增）
+    ├─ 4. 按段顺序拼接，统一重编号 chunk ID（全局递增，格式 chunk_001, chunk_002...）
     │
-    └─ 5. 写入 chunk 文件到 data/files/{hash}/chunks/
+    ├─ 5. 超过 8000 字节的 chunk 按行边界拆分，分配新的连续 ID
+    │
+    └─ 6. 写入 chunk 文件到 data/files/{hash}/chunks/
     （失败段自动 fallback 为固定切分）
 ```
 
@@ -292,7 +304,49 @@ SafeFileName: F__github_data_report.pdf
     └─ 4. 非连续 chunk 用 <chunk-{id}> 包裹
 ```
 
-### 4.6 文件变更检测
+### 4.6 增量更新（IncrementalUpdateFile）
+
+文件变更时，基于位置对齐的增量更新算法，避免全量重新处理：
+
+```
+输入：旧 chunks.json + 新文件内容
+    │
+    ├─ 1. 逐 chunk 检查 hash
+    │      计算 contentBytes[old.StartByte:old.EndByte] 的 hash
+    │      ├─ hash 一致 → chunk 未变，保留（仅调整 ID）
+    │      └─ hash 不一致 → 变化点，进入步骤 2
+    │
+    ├─ 2. 搜索对齐点
+    │      从变化点的下一个 chunk 开始，搜索 Head30 在新内容中的位置
+    │      ├─ chunk[i+1] 找到 → 对齐成功
+    │      ├─ chunk[i+1] 未找到 → 尝试 chunk[i+2], chunk[i+3]...
+    │      └─ 全部未找到 → 进入步骤 4（全量重新拆解）
+    │
+    ├─ 3. 对齐成功 → 局部重新处理
+    │      ├─ 重新处理 [changeStart, alignPos) 区域
+    │      │   ├─ ≤ 6000 字节 → LLM 生成摘要，单 chunk
+    │      │   └─ > 6000 字节 → 按行边界拆分 + LLM 生成摘要
+    │      ├─ 新 chunk ID 按顺序命名（如 chunk_010 拆出 3 个 → chunk_010/011/012）
+    │      ├─ 后续 chunk ID 顺延（原 chunk_011 → chunk_013）
+    │      └─ 后续 chunk 的 byte offset 按偏移量调整
+    │
+    ├─ 4. 全量重新拆解（对齐失败时）
+    │      └─ 从变化点开始，调用 processLargeFileParallel 完整流程
+    │
+    └─ 5. 更新 chunks.json + outline
+```
+
+**示例**：
+```
+旧 chunks: chunk_001(A) chunk_002(B) chunk_003(C) chunk_004(D)
+B 区域内容变化，C 的起始位置找到对齐 → B 拆为 2 个 chunk
+
+新 chunks: chunk_001(A) chunk_002(B') chunk_003(B'') chunk_004(C) chunk_005(D)
+                                         ↑ 原chunk_003  ↑ 原chunk_004
+                                         ID 顺延 +2     ID 顺延 +2
+```
+
+### 4.7 文件变更检测
 
 ```
 处理文件前：
@@ -308,7 +362,7 @@ SafeFileName: F__github_data_report.pdf
     └─ 处理完成后更新 files.json
 ```
 
-### 4.7 文件锁机制
+### 4.8 文件锁机制
 
 ```
 并发处理同一文件时：
@@ -319,7 +373,7 @@ SafeFileName: F__github_data_report.pdf
     └─ 处理完成 → 删除 lock 文件
 ```
 
-### 4.8 最终 Prompt 组装
+### 4.9 最终 Prompt 组装
 
 ```
 system: 文档问答助手角色设定
@@ -391,7 +445,8 @@ data: [DONE]
 
 - 大文件按 30KB 分段（`splitSegments`）
 - 每段独立 goroutine 调用 LLM
-- 全部完成后按段顺序拼接，统一重编号 chunk ID（全局递增）
+- 全部完成后按段顺序拼接，统一重编号 chunk ID（全局递增，格式 chunk_001, chunk_002...）
+- 超过 8000 字节的 chunk 按行边界拆分，分配新的连续 ID
 - 失败段自动 fallback
 
 ## 7. 配置项
@@ -406,6 +461,8 @@ data: [DONE]
 | markitdown | `MARKITDOWN_CMD` | `markitdown` | markitdown 命令路径 |
 | 检索数量 | `MAX_RETRIEVE` | `20` | 最大检索 chunk 数 |
 | 小文件阈值 | `SMALL_FILE_SIZE` | `15360` | 15KB，低于此直接存 chunk |
+| 新文件拆分阈值 | - | `8000` | 新文件 chunk 超过此值按行边界拆分 |
+| 增量更新拆分阈值 | - | `6000` | 增量更新时 chunk 超过此值拆分 |
 | 分片段大小 | - | `30KB` | 大文件并行分片的段大小 |
 | 最大并发数 | - | `20` | 并行处理 goroutine 上限 |
 
@@ -422,6 +479,8 @@ data: [DONE]
 | LLM 摘要生成失败 | 使用截断内容作为 fallback |
 | 文件锁超时 | 返回错误，跳过该文件 |
 | 全局大纲超 1MB | 截断到最后 1MB（按换行截断） |
+| 增量更新对齐失败 | 从变化点全量重新拆解 |
+| 增量更新无旧 chunks | fallback 到新文件处理流程 |
 
 ## 9. NextChat 修改
 

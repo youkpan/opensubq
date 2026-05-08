@@ -1,18 +1,50 @@
 package model
 
 import (
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
-// Chunk represents a semantic chunk in the outline
+// ChunkMeta is stored in chunks.json — lightweight metadata for each chunk
+type ChunkMeta struct {
+	ID        string `json:"id"`         // "chunk_001", "chunk_071-1"
+	StartByte int64  `json:"start_byte"` // inclusive byte offset in source
+	EndByte   int64  `json:"end_byte"`   // exclusive byte offset in source
+	Head30    string `json:"head_30"`    // first 30 bytes as hex fingerprint
+	Tail30    string `json:"tail_30"`    // last 30 bytes as hex fingerprint
+	Hash      string `json:"hash"`       // MD5 of chunk content
+	Summary   string `json:"summary"`    // 30-150 char summary
+}
+
+// ChunksFile is the top-level chunks.json structure
+type ChunksFile struct {
+	FilePath string      `json:"file_path"`
+	Chunks   []ChunkMeta `json:"chunks"`
+}
+
+// Chunk is the runtime struct used during retrieval
 type Chunk struct {
-	ID        string // e.g. chunk_001
-	FilePath  string // absolute path
-	Summary   string // 30~150 chars
-	StartLine int
-	EndLine   int
+	ID        string
+	FilePath  string
+	Summary   string
+	StartByte int64
+	EndByte   int64
+}
+
+// ToMeta converts a runtime Chunk + content into a ChunkMeta
+func (c *Chunk) ToMeta(content []byte) ChunkMeta {
+	return ChunkMeta{
+		ID:        c.ID,
+		StartByte: c.StartByte,
+		EndByte:   c.EndByte,
+		Head30:    ComputeHead30(content),
+		Tail30:    ComputeTail30(content),
+		Hash:      ComputeChunkHash(content),
+		Summary:   c.Summary,
+	}
 }
 
 // Outline represents the full outline
@@ -20,7 +52,7 @@ type Outline struct {
 	Chunks []Chunk
 }
 
-// ParseOutline parses outline content from string
+// ParseOutline parses outline content from string (2-field format: chunk_id|summary)
 func ParseOutline(content string) *Outline {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	var chunks []Chunk
@@ -29,33 +61,63 @@ func ParseOutline(content string) *Outline {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 5)
-		if len(parts) != 5 {
-			continue
-		}
-		start, err1 := strconv.Atoi(parts[3])
-		end, err2 := strconv.Atoi(parts[4])
-		if err1 != nil || err2 != nil {
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
 			continue
 		}
 		chunks = append(chunks, Chunk{
-			ID:        parts[0],
-			FilePath:  parts[1],
-			Summary:   parts[2],
-			StartLine: start,
-			EndLine:   end,
+			ID:      parts[0],
+			Summary: parts[1],
 		})
 	}
 	return &Outline{Chunks: chunks}
 }
 
-// String serializes outline to string
+// String serializes outline to string (2-field format)
 func (o *Outline) String() string {
 	var sb strings.Builder
 	for _, c := range o.Chunks {
-		sb.WriteString(fmt.Sprintf("%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine))
+		sb.WriteString(fmt.Sprintf("%s|%s\n", c.ID, c.Summary))
 	}
 	return sb.String()
+}
+
+// ParseChunksFile parses chunks.json content
+func ParseChunksFile(data []byte) (*ChunksFile, error) {
+	var cf ChunksFile
+	if err := json.Unmarshal(data, &cf); err != nil {
+		return nil, err
+	}
+	return &cf, nil
+}
+
+// SerializeChunksFile serializes ChunksFile to JSON bytes
+func SerializeChunksFile(cf *ChunksFile) ([]byte, error) {
+	return json.MarshalIndent(cf, "", "  ")
+}
+
+// ComputeHead30 returns hex-encoded first 30 bytes (or fewer if content is shorter)
+func ComputeHead30(content []byte) string {
+	n := len(content)
+	if n > 30 {
+		n = 30
+	}
+	return hex.EncodeToString(content[:n])
+}
+
+// ComputeTail30 returns hex-encoded last 30 bytes (or fewer if content is shorter)
+func ComputeTail30(content []byte) string {
+	n := len(content)
+	if n > 30 {
+		n = 30
+	}
+	return hex.EncodeToString(content[len(content)-n:])
+}
+
+// ComputeChunkHash returns MD5 hex of content
+func ComputeChunkHash(content []byte) string {
+	h := md5.Sum(content)
+	return hex.EncodeToString(h[:])
 }
 
 // ParsedPath holds extracted @path info

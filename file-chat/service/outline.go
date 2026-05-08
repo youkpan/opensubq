@@ -2,14 +2,13 @@ package service
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"file-chat/model"
 	"file-chat/store"
 )
 
-// ReadOutline reads and parses an outline file
+// ReadOutline reads and parses an outline file (2-field format)
 func ReadOutline(outlinePath string) (*model.Outline, error) {
 	if !store.FileExists(outlinePath) {
 		return &model.Outline{}, nil
@@ -21,49 +20,26 @@ func ReadOutline(outlinePath string) (*model.Outline, error) {
 	return model.ParseOutline(content), nil
 }
 
-// ReadGlobalOutline reads and parses the global outline
-func ReadGlobalOutline(dp *store.DataPaths) (*model.Outline, error) {
-	content, err := store.ReadGlobalOutline(dp)
-	if err != nil {
-		return &model.Outline{}, nil
+// BuildGlobalOutline reads all per-file outlines and assembles them into one Outline
+func BuildGlobalOutline(dp *store.DataPaths, registry *model.FileRegistry) (*model.Outline, error) {
+	var allChunks []model.Chunk
+	for filePath := range registry.Files {
+		outline, err := ReadPerFileOutline(dp, filePath)
+		if err != nil {
+			continue
+		}
+		// Set FilePath on each chunk (outline only stores chunk_id|summary)
+		for i := range outline.Chunks {
+			outline.Chunks[i].FilePath = filePath
+		}
+		allChunks = append(allChunks, outline.Chunks...)
 	}
-	return model.ParseOutline(content), nil
-}
-
-// AppendChunks appends chunk records to a file
-func AppendChunks(outlinePath string, chunks []model.Chunk) error {
-	var sb strings.Builder
-	for _, c := range chunks {
-		fmt.Fprintf(&sb, "%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine)
-	}
-	f, err := store.OpenAppend(outlinePath)
-	if err != nil {
-		return fmt.Errorf("open outline for append: %w", err)
-	}
-	defer f.Close()
-	_, err = f.WriteString(sb.String())
-	return err
-}
-
-// AppendChunksToGlobalOutline appends chunks to the global outline
-func AppendChunksToGlobalOutline(dp *store.DataPaths, chunks []model.Chunk) error {
-	var sb strings.Builder
-	for _, c := range chunks {
-		fmt.Fprintf(&sb, "%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine)
-	}
-	return store.AppendToGlobalOutline(dp, sb.String())
+	return &model.Outline{Chunks: allChunks}, nil
 }
 
 // NextChunkID generates the next chunk ID based on existing chunks
 func NextChunkID(chunks []model.Chunk) string {
-	maxID := 0
-	for _, c := range chunks {
-		num, err := strconv.Atoi(strings.TrimPrefix(c.ID, "chunk_"))
-		if err == nil && num > maxID {
-			maxID = num
-		}
-	}
-	return fmt.Sprintf("chunk_%03d", maxID+1)
+	return fmt.Sprintf("chunk_%03d", nextChunkNum(chunks))
 }
 
 // GetProcessedFiles returns the set of file paths already in the outline
@@ -75,7 +51,7 @@ func GetProcessedFiles(outline *model.Outline) map[string]bool {
 	return files
 }
 
-// WritePerFileOutline writes chunks for a single file to its own outline file
+// WritePerFileOutline writes chunks for a single file to its outline file (2-field format)
 func WritePerFileOutline(dp *store.DataPaths, chunks []model.Chunk) error {
 	if len(chunks) == 0 {
 		return nil
@@ -84,7 +60,7 @@ func WritePerFileOutline(dp *store.DataPaths, chunks []model.Chunk) error {
 	path := dp.GetFileOutlinePath(filePath)
 	var sb strings.Builder
 	for _, c := range chunks {
-		fmt.Fprintf(&sb, "%s|%s|%s|%d|%d\n", c.ID, c.FilePath, c.Summary, c.StartLine, c.EndLine)
+		fmt.Fprintf(&sb, "%s|%s\n", c.ID, c.Summary)
 	}
 	return store.WriteFile(path, sb.String())
 }
@@ -95,14 +71,7 @@ func ReadPerFileOutline(dp *store.DataPaths, filePath string) (*model.Outline, e
 	return ReadOutline(path)
 }
 
-// RemoveChunksForFile removes all chunks for a file from the global outline
+// RemoveChunksForFile removes all data for a file (just deletes the file dir)
 func RemoveChunksForFile(dp *store.DataPaths, filePath string, outline *model.Outline) error {
-	var remaining []model.Chunk
-	for _, c := range outline.Chunks {
-		if c.FilePath != filePath {
-			remaining = append(remaining, c)
-		}
-	}
-	outline.Chunks = remaining
-	return store.WriteGlobalOutline(dp, outline.String())
+	return dp.DeleteFileDir(filePath)
 }

@@ -13,6 +13,22 @@ var pathPattern = regexp.MustCompile(`@((?:[A-Za-z]:[\\/]|[.]{0,2}[\\/])\S+|\S+[
 const AllFilesMarker = "@全部"
 const AllFilesMarkerEn = "@all"
 
+// plainTextExts lists file extensions that can be read directly without saving a copy
+var plainTextExts = map[string]bool{
+	".txt": true, ".md": true, ".go": true, ".py": true, ".java": true,
+	".js": true, ".ts": true, ".json": true, ".yaml": true, ".yml": true,
+	".xml": true, ".html": true, ".css": true, ".sql": true, ".sh": true,
+	".c": true, ".cpp": true, ".h": true, ".rs": true, ".toml": true,
+	".ini": true, ".cfg": true, ".conf": true, ".log": true,
+	".csv": true,
+}
+
+// IsPlainTextFile returns true if the file can be read directly from its original path
+func IsPlainTextFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return plainTextExts[ext]
+}
+
 // ExtractPaths extracts @path references from message content.
 // Returns (paths, hasAll) where hasAll indicates @全部 or @all was used.
 func ExtractPaths(content string) ([]string, bool) {

@@ -9,26 +9,24 @@ import (
 
 // DataPaths manages all data storage paths under the data/ directory
 type DataPaths struct {
-	DataDir   string // data/
-	FilesDir  string // data/files/
-	ChatsDir  string // data/chats/
-	GlobalDir string // data/global/
+	DataDir  string // data/
+	FilesDir string // data/files/
+	ChatsDir string // data/chats/
 }
 
 // NewDataPaths creates a new DataPaths instance
 func NewDataPaths(dataDir string) *DataPaths {
 	return &DataPaths{
-		DataDir:   dataDir,
-		FilesDir:  filepath.Join(dataDir, "files"),
-		ChatsDir:  filepath.Join(dataDir, "chats"),
-		GlobalDir: filepath.Join(dataDir, "global"),
+		DataDir:  dataDir,
+		FilesDir: filepath.Join(dataDir, "files"),
+		ChatsDir: filepath.Join(dataDir, "chats"),
 	}
 }
 
 // InitDataDir creates the data directory structure and returns DataPaths
 func InitDataDir(dataDir string) (*DataPaths, error) {
 	dp := NewDataPaths(dataDir)
-	for _, dir := range []string{dp.FilesDir, dp.ChatsDir, dp.GlobalDir} {
+	for _, dir := range []string{dp.FilesDir, dp.ChatsDir} {
 		if err := EnsureDir(dir); err != nil {
 			return nil, fmt.Errorf("create data dir %s: %w", dir, err)
 		}
@@ -49,11 +47,6 @@ func (dp *DataPaths) GetFileDir(filePath string) string {
 	return filepath.Join(dp.FilesDir, h[:2], h[2:4], SafeFileName(filePath))
 }
 
-// GetFileChunksDir returns the chunks directory for a file
-func (dp *DataPaths) GetFileChunksDir(filePath string) string {
-	return filepath.Join(dp.GetFileDir(filePath), "chunks")
-}
-
 // GetFileOutlinePath returns the outline file path for a specific file
 func (dp *DataPaths) GetFileOutlinePath(filePath string) string {
 	return filepath.Join(dp.GetFileDir(filePath), "outline")
@@ -64,14 +57,14 @@ func (dp *DataPaths) GetFileSourcePath(filePath string) string {
 	return filepath.Join(dp.GetFileDir(filePath), "source")
 }
 
-// GetGlobalOutlinePath returns the global outline path
-func (dp *DataPaths) GetGlobalOutlinePath() string {
-	return filepath.Join(dp.GlobalDir, "global_outline")
+// GetChunksJSONPath returns the chunks.json path for a specific file
+func (dp *DataPaths) GetChunksJSONPath(filePath string) string {
+	return filepath.Join(dp.GetFileDir(filePath), "chunks.json")
 }
 
-// GetGlobalSummaryPath returns the global files summary path
-func (dp *DataPaths) GetGlobalSummaryPath() string {
-	return filepath.Join(dp.GlobalDir, "global_files_summary.xml")
+// GetFileSummaryPath returns the per-file summary.xml path
+func (dp *DataPaths) GetFileSummaryPath(filePath string) string {
+	return filepath.Join(dp.GetFileDir(filePath), "summary.xml")
 }
 
 // GetChatFilesPath returns the chat files path for a conversation
@@ -84,14 +77,9 @@ func (dp *DataPaths) GetRegistryPath() string {
 	return filepath.Join(dp.DataDir, "files.json")
 }
 
-// GetChunkFilePath returns the chunk file path for a specific file and chunk ID
-func (dp *DataPaths) GetChunkFilePath(filePath, chunkID string) string {
-	return filepath.Join(dp.GetFileChunksDir(filePath), chunkID)
-}
-
 // InitFileDir creates the directory structure for a file's storage
 func (dp *DataPaths) InitFileDir(filePath string) error {
-	return EnsureDir(dp.GetFileChunksDir(filePath))
+	return EnsureDir(dp.GetFileDir(filePath))
 }
 
 // DeleteFileDir removes all stored data for a file

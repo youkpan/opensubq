@@ -2,57 +2,29 @@ package store
 
 import (
 	"fmt"
-	"strings"
+	"os"
+
+	"file-chat/model"
 )
 
-// ReadGlobalOutline reads the global outline content
-func ReadGlobalOutline(dp *DataPaths) (string, error) {
-	path := dp.GetGlobalOutlinePath()
+// ReadChunksJSON reads and parses chunks.json for a file
+func ReadChunksJSON(dp *DataPaths, filePath string) (*model.ChunksFile, error) {
+	path := dp.GetChunksJSONPath(filePath)
 	if !FileExists(path) {
-		return "", nil
+		return &model.ChunksFile{FilePath: filePath}, nil
 	}
-	return ReadFile(path)
-}
-
-// AppendToGlobalOutline appends content to the global outline
-func AppendToGlobalOutline(dp *DataPaths, content string) error {
-	f, err := OpenAppend(dp.GetGlobalOutlinePath())
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("open global outline: %w", err)
+		return nil, fmt.Errorf("read chunks.json: %w", err)
 	}
-	defer f.Close()
-	_, err = f.WriteString(content)
-	return err
+	return model.ParseChunksFile(data)
 }
 
-// WriteGlobalOutline writes the full global outline (used when removing entries)
-func WriteGlobalOutline(dp *DataPaths, content string) error {
-	return WriteFile(dp.GetGlobalOutlinePath(), content)
-}
-
-// ReadGlobalSummary reads the global files summary
-func ReadGlobalSummary(dp *DataPaths) string {
-	path := dp.GetGlobalSummaryPath()
-	if !FileExists(path) {
-		return ""
-	}
-	content, err := ReadFile(path)
+// WriteChunksJSON serializes and writes chunks.json for a file
+func WriteChunksJSON(dp *DataPaths, filePath string, cf *model.ChunksFile) error {
+	data, err := model.SerializeChunksFile(cf)
 	if err != nil {
-		return ""
+		return fmt.Errorf("serialize chunks.json: %w", err)
 	}
-	return content
-}
-
-// TrimOutlineToSize trims outline content to maxBytes from the end, breaking at line boundary
-func TrimOutlineToSize(content string, maxBytes int) string {
-	if len(content) <= maxBytes {
-		return content
-	}
-	// Take the last maxBytes
-	truncated := content[len(content)-maxBytes:]
-	// Break at first newline to ensure line-aligned
-	if idx := strings.IndexByte(truncated, '\n'); idx >= 0 {
-		truncated = truncated[idx+1:]
-	}
-	return truncated
+	return WriteFile(dp.GetChunksJSONPath(filePath), string(data))
 }

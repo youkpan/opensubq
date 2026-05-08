@@ -19,15 +19,13 @@ const allFilesRetrievePrompt = `你是一个文档检索助手。以下是系统
 请根据用户的问题，列出最相关的文件路径，每行一个，最多 %d 个。
 只输出文件路径，不要输出其他内容。`
 
-const maxOutlineSize = 1048576 // 1MB
-
 // HandleAllFiles handles @全部 requests with two-level retrieval:
-// 1. global_files_summary.xml → LLM selects relevant files
+// 1. per-file summary → LLM selects relevant files
 // 2. per-file outline → LLM selects relevant chunks
-func HandleAllFiles(client *llm.Client, dp *store.DataPaths, query string, maxRetrieve int) ([]model.Chunk, error) {
-	// 1. Read global summary
-	summaryContent := store.ReadGlobalSummary(dp)
-	if summaryContent == "" {
+func HandleAllFiles(client *llm.Client, dp *store.DataPaths, registry *model.FileRegistry, query string, maxRetrieve int) ([]model.Chunk, error) {
+	// 1. Build global summary from per-file summaries
+	summaryContent := BuildGlobalSummary(dp, registry)
+	if summaryContent == "" || summaryContent == "<files>\n</files>" {
 		return nil, nil
 	}
 
@@ -51,6 +49,23 @@ func HandleAllFiles(client *llm.Client, dp *store.DataPaths, query string, maxRe
 		if err != nil {
 			continue
 		}
+		// Set FilePath on each chunk
+		for i := range fileOutline.Chunks {
+			fileOutline.Chunks[i].FilePath = fp
+			// Load byte offsets from chunks.json
+			cf, err := store.ReadChunksJSON(dp, fp)
+			if err == nil {
+				for j := range fileOutline.Chunks {
+					for _, m := range cf.Chunks {
+						if m.ID == fileOutline.Chunks[j].ID {
+							fileOutline.Chunks[j].StartByte = m.StartByte
+							fileOutline.Chunks[j].EndByte = m.EndByte
+							break
+						}
+					}
+				}
+			}
+		}
 		allRelevantChunks = append(allRelevantChunks, fileOutline.Chunks...)
 	}
 
@@ -70,21 +85,31 @@ func HandleAllFiles(client *llm.Client, dp *store.DataPaths, query string, maxRe
 
 // HandleAllFilesFromOutline uses global outline directly for retrieval
 // Falls back to this when global summary is empty or insufficient
-func HandleAllFilesFromOutline(client *llm.Client, dp *store.DataPaths, query string, maxRetrieve int) ([]model.Chunk, error) {
-	// Read global outline
-	outlineContent, err := store.ReadGlobalOutline(dp)
-	if err != nil || outlineContent == "" {
+func HandleAllFilesFromOutline(client *llm.Client, dp *store.DataPaths, registry *model.FileRegistry, query string, maxRetrieve int) ([]model.Chunk, error) {
+	// Build global outline from per-file outlines
+	outline, err := BuildGlobalOutline(dp, registry)
+	if err != nil || len(outline.Chunks) == 0 {
 		return nil, nil
 	}
 
-	// Truncate if exceeds 1MB
-	if len(outlineContent) > maxOutlineSize {
-		outlineContent = store.TrimOutlineToSize(outlineContent, maxOutlineSize)
-	}
-
-	outline := model.ParseOutline(outlineContent)
-	if len(outline.Chunks) == 0 {
-		return nil, nil
+	// Load byte offsets for all chunks
+	for filePath := range registry.Files {
+		cf, err := store.ReadChunksJSON(dp, filePath)
+		if err != nil {
+			continue
+		}
+		for i := range outline.Chunks {
+			if outline.Chunks[i].FilePath != filePath {
+				continue
+			}
+			for _, m := range cf.Chunks {
+				if m.ID == outline.Chunks[i].ID {
+					outline.Chunks[i].StartByte = m.StartByte
+					outline.Chunks[i].EndByte = m.EndByte
+					break
+				}
+			}
+		}
 	}
 
 	return RetrieveChunks(client, outline, query, maxRetrieve)

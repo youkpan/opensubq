@@ -50,7 +50,7 @@ func RetrieveChunks(client *llm.Client, outline *model.Outline, query string, ma
 	return selected, nil
 }
 
-// BuildContext reads selected chunks with expanded context and builds final context string
+// BuildContext reads selected chunks using byte offsets from chunks.json and builds final context string
 func BuildContext(dp *store.DataPaths, selected []model.Chunk) (string, error) {
 	if len(selected) == 0 {
 		return "", nil
@@ -62,25 +62,59 @@ func BuildContext(dp *store.DataPaths, selected []model.Chunk) (string, error) {
 		if sorted[i].FilePath != sorted[j].FilePath {
 			return sorted[i].FilePath < sorted[j].FilePath
 		}
-		return sorted[i].StartLine < sorted[j].StartLine
+		return sorted[i].StartByte < sorted[j].StartByte
 	})
+
+	// Load chunks.json for each unique file to get byte offsets
+	type fileData struct {
+		metas map[string]model.ChunkMeta
+	}
+	fileMetaCache := make(map[string]*fileData)
+	loadFileMetas := func(filePath string) *fileData {
+		if fd, ok := fileMetaCache[filePath]; ok {
+			return fd
+		}
+		cf, err := store.ReadChunksJSON(dp, filePath)
+		if err != nil {
+			return nil
+		}
+		metas := make(map[string]model.ChunkMeta)
+		for _, m := range cf.Chunks {
+			metas[m.ID] = m
+		}
+		fd := &fileData{metas: metas}
+		fileMetaCache[filePath] = fd
+		return fd
+	}
 
 	var sb strings.Builder
 	sb.WriteString("<context>\n")
 
 	prevFile := ""
-	prevEnd := 0
+	prevEndByte := int64(-1)
 
 	for i, c := range sorted {
-		chunkPath := dp.GetChunkFilePath(c.FilePath, c.ID)
-		chunkContent, err := store.ReadFile(chunkPath)
-		if err != nil {
-			continue
+		needWrapper := i == 0 || c.FilePath != prevFile || c.StartByte > prevEndByte+1
+
+		fd := loadFileMetas(c.FilePath)
+		var chunkContent string
+		if fd != nil {
+			if meta, ok := fd.metas[c.ID]; ok {
+				content, err := ReadChunkContent(dp, &meta, c.FilePath)
+				if err == nil {
+					expanded := expandContextByByte(dp, c.FilePath, c.StartByte, c.EndByte, content)
+					chunkContent = expanded
+				}
+			}
 		}
-
-		needWrapper := i == 0 || c.FilePath != prevFile || c.StartLine > prevEnd+1
-
-		expandedContent := expandContext(dp, c, chunkContent)
+		if chunkContent == "" {
+			// Fallback: read directly from source
+			srcPath := GetSourcePath(dp, c.FilePath)
+			data, err := os.ReadFile(srcPath)
+			if err == nil && c.EndByte <= int64(len(data)) {
+				chunkContent = string(data[c.StartByte:c.EndByte])
+			}
+		}
 
 		if needWrapper {
 			if i > 0 {
@@ -89,11 +123,11 @@ func BuildContext(dp *store.DataPaths, selected []model.Chunk) (string, error) {
 			fmt.Fprintf(&sb, "<%s>\n", c.ID)
 		}
 
-		sb.WriteString(expandedContent)
+		sb.WriteString(chunkContent)
 		sb.WriteString("\n")
 
 		prevFile = c.FilePath
-		prevEnd = c.EndLine
+		prevEndByte = c.EndByte
 
 		if i == len(sorted)-1 {
 			fmt.Fprintf(&sb, "</%s>\n", c.ID)
@@ -104,70 +138,92 @@ func BuildContext(dp *store.DataPaths, selected []model.Chunk) (string, error) {
 	return sb.String(), nil
 }
 
-// expandContext adds surrounding context from the original source file
-func expandContext(dp *store.DataPaths, chunk model.Chunk, chunkContent string) string {
-	sourcePath := dp.GetFileSourcePath(chunk.FilePath)
-	data, err := os.ReadFile(sourcePath)
+// GetSourcePath returns the path to read source content from:
+// - plain text files: read directly from original path
+// - document files: read from stored source copy
+func GetSourcePath(dp *store.DataPaths, filePath string) string {
+	if IsPlainTextFile(filePath) {
+		return filePath
+	}
+	return dp.GetFileSourcePath(filePath)
+}
+
+// ReadChunkContent reads chunk content from source file using byte offsets
+func ReadChunkContent(dp *store.DataPaths, meta *model.ChunkMeta, filePath string) (string, error) {
+	srcPath := GetSourcePath(dp, filePath)
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("open source %s: %w", srcPath, err)
+	}
+	defer f.Close()
+
+	size := meta.EndByte - meta.StartByte
+	buf := make([]byte, size)
+	_, err = f.ReadAt(buf, meta.StartByte)
+	if err != nil {
+		return "", fmt.Errorf("read chunk bytes: %w", err)
+	}
+	return string(buf), nil
+}
+
+// expandContextByByte adds surrounding context from the source file using byte offsets
+func expandContextByByte(dp *store.DataPaths, filePath string, startByte, endByte int64, chunkContent string) string {
+	srcPath := GetSourcePath(dp, filePath)
+	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return chunkContent
 	}
-	sourceContent := string(data)
-	lines := strings.Split(sourceContent, "\n")
 
-	startIdx := chunk.StartLine - 1
-	endIdx := chunk.EndLine
-
-	// Expand before
-	beforeStart := startIdx
-	byteCount := 0
+	// Expand backward
+	beforeStart := startByte
+	beforeBytes := 0
 	for beforeStart > 0 {
-		byteCount += len(lines[beforeStart-1]) + 1
-		if byteCount > 1200 {
+		beforeStart--
+		beforeBytes++
+		if beforeBytes > 1200 {
 			break
 		}
-		if byteCount > 500 {
-			if strings.TrimSpace(lines[beforeStart-1]) == "" {
+		if beforeBytes > 500 && data[beforeStart] == '\n' {
+			break
+		}
+		if beforeBytes > 800 {
+			ch := data[beforeStart]
+			if ch == '\n' || ch == '.' || (beforeStart >= 3 && data[beforeStart] == 0x80 && data[beforeStart-1] == 0x80 && data[beforeStart-2] == 0xe3 && data[beforeStart-3] == 0xe3) {
+				// Chinese period 。 is e3 80 82 in UTF-8
 				break
 			}
 		}
-		if byteCount > 800 {
-			if strings.TrimSpace(lines[beforeStart-1]) == "" || strings.HasSuffix(lines[beforeStart-1], "。") || strings.HasSuffix(lines[beforeStart-1], ".") {
-				break
-			}
-		}
-		beforeStart--
 	}
 
-	// Expand after
-	afterEnd := endIdx
-	byteCount = 0
-	for afterEnd < len(lines) {
-		byteCount += len(lines[afterEnd]) + 1
-		if byteCount > 1200 {
+	// Expand forward
+	afterEnd := endByte
+	afterBytes := 0
+	for afterEnd < int64(len(data)) {
+		afterBytes++
+		afterEnd++
+		if afterBytes > 1200 {
 			break
 		}
-		if byteCount > 500 {
-			if strings.TrimSpace(lines[afterEnd]) == "" {
+		if afterBytes > 500 && data[afterEnd-1] == '\n' {
+			break
+		}
+		if afterBytes > 800 {
+			ch := data[afterEnd-1]
+			if ch == '\n' || ch == '.' {
 				break
 			}
 		}
-		if byteCount > 800 {
-			if strings.TrimSpace(lines[afterEnd]) == "" || strings.HasSuffix(lines[afterEnd], "。") || strings.HasSuffix(lines[afterEnd], ".") {
-				break
-			}
-		}
-		afterEnd++
 	}
 
 	var sb strings.Builder
-	if beforeStart < startIdx {
-		sb.WriteString(strings.Join(lines[beforeStart:startIdx], "\n"))
-		sb.WriteString("\n")
+	if beforeStart < startByte {
+		sb.Write(data[beforeStart:startByte])
+		sb.WriteByte('\n')
 	}
 	sb.WriteString(chunkContent)
-	if endIdx < afterEnd {
-		sb.WriteString("\n")
-		sb.WriteString(strings.Join(lines[endIdx:afterEnd], "\n"))
+	if endByte < afterEnd {
+		sb.WriteByte('\n')
+		sb.Write(data[endByte:afterEnd])
 	}
 	return sb.String()
 }
