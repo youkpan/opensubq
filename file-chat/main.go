@@ -231,8 +231,11 @@ func main() {
 	}()
 
 	// Auto-open browser (打开两个URL)
-	go openBrowser(fmt.Sprintf("http://localhost:%s", config.Port))
+
 	go openBrowser("https://zyinfo.pro")
+
+	time.Sleep(2 * time.Second)
+	go openBrowser(fmt.Sprintf("http://localhost:%s", config.Port))
 
 	log.Fatal(srv.ListenAndServe())
 }
@@ -243,7 +246,7 @@ func licenseInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"exp_date":   expDate,
+		"exp_date":    expDate,
 		"hardware_id": hardwareID,
 	})
 }

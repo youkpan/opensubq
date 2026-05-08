@@ -10,3 +10,7 @@
 /Release/*.exe
 /file-chat/*.bak
 /Release/start-with-key-pan.bat
+/file-chat/dist
+/Release
+/ZY-File-Chat AI 文件对话/dist
+/ZY-File-Chat AI 文件对话/*.exe

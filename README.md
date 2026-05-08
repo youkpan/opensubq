@@ -74,7 +74,7 @@ See [Architecture](./wiki2/Architecture-file-chat.md) and [PRD](./wiki2/PRD-file
 3. Open http://localhost:3000, go to Settings:
    - Custom API endpoint: `http://localhost:8880`
    - API Key: your DeepSeek API Key
-   - Model: `deepseek-v4-flash`, select **deepseek-chat** as provider
+   - Model: `deepseek-v4-flash`, select **deepseek-v4-flash** as provider
 4. New chat, type `@absolute\path\to\file.txt` + your question, send
 
 **Screenshot:**

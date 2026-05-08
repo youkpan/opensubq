@@ -78,17 +78,22 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 	}
 	log.Printf("[Step 2] 提取路径: paths=%v, hasAll=%v", allPaths, hasAll)
 
-	if len(allPaths) == 0 && !hasAll {
-		log.Printf("[Step 2] 无文件引用，透传请求")
-		return cleanMessages, nil
-	}
-
-	// 3. Initialize data directory
+	// 3. Initialize data directory (needed for chat-files.json)
 	dp, err := store.InitDataDir(s.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("init data dir: %w", err)
 	}
 	log.Printf("[Step 3] 初始化数据目录: %s", dp.DataDir)
+
+	if len(allPaths) == 0 && !hasAll {
+		// No new file references — check if conversation has associated files
+		chatFiles, _ := store.ReadChatFiles(dp, conversationID)
+		if len(chatFiles.Files) == 0 {
+			log.Printf("[Step 2] 无文件引用且对话无关联文件，透传请求")
+			return cleanMessages, nil
+		}
+		log.Printf("[Step 2] 无新文件引用，使用对话关联文件: %d 个", len(chatFiles.Files))
+	}
 
 	// 4. Load global registry
 	registry, err := store.ReadFileRegistry(dp)
@@ -149,6 +154,10 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 	for _, f := range filesToProcess {
 		log.Printf("[Step 5]   待处理: %s", f)
 	}
+n		// Add skipped (unchanged) files to chat-files.json so they are included in retrieval
+		for _, f := range filesSkipped {
+			store.AddFileToChat(dp, conversationID, f)
+		}
 
 	// 6. Process files in parallel
 	if len(filesToProcess) > 0 {
@@ -297,6 +306,26 @@ func (s *ChatService) ProcessRequest(messages []model.Message, conversationID st
 		}
 	}
 	log.Printf("[Step 8] 全局大纲: %d 个 chunks", len(outline.Chunks))
+
+	// Filter outline to conversation scope if not @全部
+	if !hasAll {
+		chatFiles, _ := store.ReadChatFiles(dp, conversationID)
+		chatFileSet := make(map[string]bool)
+		for _, f := range chatFiles.Files {
+			chatFileSet[f] = true
+		}
+		for _, p := range allPaths {
+			chatFileSet[p] = true
+		}
+		var filtered []model.Chunk
+		for _, c := range outline.Chunks {
+			if chatFileSet[c.FilePath] {
+				filtered = append(filtered, c)
+			}
+		}
+		outline.Chunks = filtered
+		log.Printf("[Step 8] 对话范围大纲: %d 个 chunks (过滤后)", len(outline.Chunks))
+	}
 
 	if len(outline.Chunks) == 0 {
 		log.Printf("[Step 8] 大纲为空，透传请求")

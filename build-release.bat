@@ -29,12 +29,17 @@ cd /d "%~dp0"
 if not exist Release mkdir Release
 if exist Release\dist rmdir /S /Q Release\dist
 if exist file-chat\dist rmdir /S /Q file-chat\dist
+if exist "ZY-File-Chat AI 文件对话\dist" rmdir /S /Q "ZY-File-Chat AI 文件对话\dist"
+
 mkdir Release\dist
 
 REM 复制 NextChat 静态文件到 Release/dist/
 xcopy /E /I /Y "NextChat\out\*" "Release\dist\" >nul
 xcopy /E /I /Y "NextChat\out\*" "file-chat\dist\" >nul
+xcopy /E /I /Y "NextChat\out\*" "ZY-File-Chat AI 文件对话\dist\" >nul
+
 echo [2/4] 静态文件已复制到 Release\dist\
+
 echo.
 
 REM ====== 3. 编译 Go 后端 ======
@@ -50,6 +55,8 @@ if errorlevel 1 (
 )
 echo [3/4] Go 后端编译完成
 echo.
+
+xcopy /E /I /Y "%~dp0Release\file-chat.exe" "ZY-File-Chat AI 文件对话\dist\" >nul
 
 REM ====== 4. 复制启动文件 ======
 echo [4/4] 正在复制启动文件...
