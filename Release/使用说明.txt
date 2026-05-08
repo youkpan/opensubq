@@ -1,0 +1,98 @@
+============================================
+    AI 文件对话系统 使用说明
+============================================
+
+一、功能简介
+-------------------------------------------
+本系统是一个基于长文本智能问答的 AI 对话工具：
+
+  - 在对话中通过 @文件路径 引用本地文件
+  - 自动将文档按语义拆分为片段并建立索引
+  - 支持 PDF、Word、Excel、PPT、TXT、Markdown 等格式
+  - 使用 DeepSeek AI 进行智能检索和流式回答
+  - 支持 @全部 跨文件检索所有已处理过的文档
+
+二、运行环境要求
+-------------------------------------------
+  - Windows 7 / 10 / 11
+  - 已安装 Python（用于 markitdown 文档转换）
+    安装命令：pip install markitdown
+  - DeepSeek API Key（免费注册获取）
+
+三、首次使用步骤
+-------------------------------------------
+
+1. 获取 DeepSeek API Key
+   访问 https://platform.deepseek.com/
+   注册账号 → 进入"API Keys"页面 → 创建新密钥
+
+2. 配置 API Key（二选一）
+
+   方式 A - 环境变量（推荐）：
+     set DEEPSEEK_API_KEY=sk-your-key-here
+     然后双击 启动AI文件对话_Run_.bat
+
+   方式 B - 直接编辑 bat：
+     用记事本打开 启动AI文件对话_Run_.bat
+     取消第 20 行的 REM 注释，填入你的 key：
+       set DEEPSEEK_API_KEY=sk-your-key-here
+     保存后双击运行
+
+3. 启动后浏览器会自动打开 http://localhost:8880
+
+四、使用方法
+-------------------------------------------
+
+  在对话输入框中输入：
+
+    分析 @C:\Users\你的用户名\Documents\报告.pdf 的关键数据
+
+  系统会自动：
+    - 转换 PDF 为文本
+    - 语义拆分并建立索引
+    - 检索相关内容
+    - 调用 AI 生成回答
+
+  追问时无需再次引用同一文件，系统会自动关联。
+
+  使用 @全部 可检索所有已处理过的文件：
+
+    总结所有文档中的核心观点 @全部
+
+五、可选配置（通过环境变量）
+-------------------------------------------
+
+  DEEPSEEK_API_KEY     DeepSeek API 密钥（必填）
+  DEEPSEEK_BASE_URL    API 地址（默认 https://api.deepseek.com）
+  MODEL                使用模型（默认 deepseek-v4-flash）
+  PORT                 服务端口（默认 8880）
+  DATA_DIR             数据目录（默认 ./data）
+
+六、目录说明
+-------------------------------------------
+
+  file-chat.exe        主程序（Go 后端 + NextChat 前端）
+  dist/                NextChat 前端静态文件
+  data/                自动生成的索引数据（运行后创建）
+  启动AI文件对话_Run_.bat   启动脚本
+
+七、常见问题
+-------------------------------------------
+
+  Q: 浏览器打不开？
+  A: 手动访问 http://localhost:8880
+
+  Q: 提示 "markitdown not found"？
+  A: 运行 pip install markitdown
+
+  Q: 如何更换 API Key？
+  A: 删除 data/ 目录不会丢失对话记录（存在浏览器本地）
+      直接修改环境变量或 bat 文件中的 key 即可
+
+  Q: 支持哪些文件格式？
+  A: txt, md, go, py, java, json, doc, docx, pdf,
+     xls, xlsx, ppt, pptx 等
+
+============================================
+   项目地址：https://github.com/subq
+============================================

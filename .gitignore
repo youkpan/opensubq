@@ -6,3 +6,6 @@
 /node_modules
 /scripts/start-nextchat.bat
 /scripts/start-filechat.bat
+/file-chat/data/files
+/Release/*.exe
+/file-chat/*.bak

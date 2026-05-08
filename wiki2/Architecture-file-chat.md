@@ -328,7 +328,8 @@ SafeFileName: F__github_data_report.pdf
     │      │   └─ > 6000 字节 → 按行边界拆分 + LLM 生成摘要
     │      ├─ 新 chunk ID 按顺序命名（如 chunk_010 拆出 3 个 → chunk_010/011/012）
     │      ├─ 后续 chunk ID 顺延（原 chunk_011 → chunk_013）
-    │      └─ 后续 chunk 的 byte offset 按偏移量调整
+    │      ├─ 后续 chunk 的 byte offset 按偏移量调整（原地修改）
+    │      └─ 从 alignIdx 继续循环，逐个验证后续 chunk
     │
     ├─ 4. 全量重新拆解（对齐失败时）
     │      └─ 从变化点开始，调用 processLargeFileParallel 完整流程

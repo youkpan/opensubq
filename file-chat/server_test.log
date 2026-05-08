@@ -1,0 +1,26 @@
+2026/05/08 14:58:42 [STATIC] serving from ./dist
+2026/05/08 14:58:42 file-chat server starting on :8880
+2026/05/08 14:58:43 [BROWSER] failed to open browser: exec: "rundll32": executable file not found in %PATH%
+2026/05/08 14:59:14 [REQUEST] POST /v1/chat/completions from [::1]:11179
+2026/05/08 14:59:32 [REQUEST] POST /v1/chat/completions from [::1]:11190
+2026/05/08 14:59:32 [Step 1] conversationID=test-incremental-001
+2026/05/08 14:59:32 [Step 2] 提取路径: paths=[F:/github/subq/file-chat/testnovel.txt], hasAll=false
+2026/05/08 14:59:32 [Step 3] 初始化数据目录: ./data
+2026/05/08 14:59:32 [Step 4] 加载注册表: 1 个文件
+2026/05/08 14:59:32 [Step 5] 文件已变更，增量更新: F:\github\subq\file-chat\testnovel.txt
+2026/05/08 14:59:32 [Step 5] 文件清单: 待处理=1, 跳过(未变更)=0
+2026/05/08 14:59:32 [Step 5]   待处理: F:\github\subq\file-chat\testnovel.txt
+2026/05/08 14:59:32 [Step 6] 开始并行处理 1 个文件 (并发上限=20)
+2026/05/08 15:00:12 [Step 6]   文件处理完成 [F:\github\subq\file-chat\testnovel.txt]: 28 chunks [chunk_001 chunk_002 chunk_004 chunk_005 chunk_007 chunk_008 chunk_009 chunk_010 chunk_011 chunk_012 chunk_013 chunk_014 chunk_015 chunk_016 chunk_018 chunk_019 chunk_021 chunk_022 chunk_024 chunk_025 chunk_027 chunk_028 chunk_029 chunk_030 chunk_032 chunk_033 chunk_034 chunk_035] (40.1s)
+2026/05/08 15:00:12 [Step 6] 并行处理完成 (40.1s)
+2026/05/08 15:00:12 [Step 7] 组装结果: per-file outline + summary + chunks.json + registry
+2026/05/08 15:00:12 [Step 7]   组装: F:\github\subq\file-chat\testnovel.txt → chunks [chunk_001 chunk_002 chunk_004 chunk_005 chunk_007 chunk_008 chunk_009 chunk_010 chunk_011 chunk_012 chunk_013 chunk_014 chunk_015 chunk_016 chunk_018 chunk_019 chunk_021 chunk_022 chunk_024 chunk_025 chunk_027 chunk_028 chunk_029 chunk_030 chunk_032 chunk_033 chunk_034 chunk_035]
+2026/05/08 15:00:17 [Step 7]   摘要: F:\github\subq\file-chat\testnovel.txt → 该文件包含两部分内容：一是萧逸武侠小说《飲馬流花河》的片段，讲述春若水与君无忌的爱情及汉王逼婚等情节；二是为测试文件增量更新功能而重复插入的段落，描述无名侠客获武功秘籍、练成绝世武功后继续行侠仗义的故事。
+2026/05/08 15:00:17 [Step 7] 注册表已更新: 1 个文件
+2026/05/08 15:00:17 [Step 8] 全局大纲: 28 个 chunks
+2026/05/08 15:00:17 [Step 9] 查询: "���ܽ�һ��  ����Ҫ����"
+2026/05/08 15:00:17 [Step 10] 开始检索 (hasAll=false, maxRetrieve=20)
+2026/05/08 15:00:20 [Step 10] 路径检索: 1 个 chunks
+2026/05/08 15:00:20 [Step 10] 选中 chunks: [chunk_001(testnovel.txt:0-7970)]
+2026/05/08 15:00:20 [Step 11] 上下文构建完成: 8645 字符, 8645 bytes
+2026/05/08 15:00:20 [Step 12] 最终消息: 4 条, 总耗时 47.1s

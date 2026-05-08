@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	segmentSizeChars     = 30 * 1024 // 30KB per segment
-	maxConcurrency       = 20        // max concurrent goroutines
-	maxChunkBytesNew     = 8000      // new file split threshold
-	maxChunkBytesUpdate  = 6000      // incremental update split threshold
+	segmentSizeChars    = 30 * 1024 // 30KB per segment
+	maxConcurrency      = 20        // max concurrent goroutines
+	maxChunkBytesNew    = 8000      // new file split threshold
+	maxChunkBytesUpdate = 6000      // incremental update split threshold
 )
 
 const chunkingSystemPrompt = `你是一个文本分片助手。请将提供的文本按语义逻辑拆分为 1~3 个片段。
@@ -125,7 +125,7 @@ func processSmallFile(client *llm.Client, dp *store.DataPaths, filePath, content
 
 	metas := maybeSplitChunks([]model.ChunkMeta{
 		chunk.ToMeta(chunkContent),
-	}, []byte(content), &nextID, maxChunkBytesNew)
+	}, []byte(content), &nextID, maxChunkBytesNew, client, filePath)
 
 	return []model.Chunk{chunk}, metas, nil
 }
@@ -197,7 +197,7 @@ func processLargeFileParallel(client *llm.Client, dp *store.DataPaths, filePath,
 				EndByte:   endByte,
 			}
 			chunkContent := contentBytes[startByte:endByte]
-			allMetas = append(allMetas, maybeSplitChunks([]model.ChunkMeta{c.ToMeta(chunkContent)}, contentBytes, &nextIDNum, maxChunkBytesNew)...)
+			allMetas = append(allMetas, maybeSplitChunks([]model.ChunkMeta{c.ToMeta(chunkContent)}, contentBytes, &nextIDNum, maxChunkBytesNew, client, filePath)...)
 			allChunks = append(allChunks, c)
 			nextIDNum++
 			continue
@@ -231,7 +231,7 @@ func processLargeFileParallel(client *llm.Client, dp *store.DataPaths, filePath,
 				StartByte: startByte,
 				EndByte:   endByte,
 			}
-			allMetas = append(allMetas, maybeSplitChunks([]model.ChunkMeta{c.ToMeta(chunkContent)}, contentBytes, &nextIDNum, maxChunkBytesNew)...)
+			allMetas = append(allMetas, maybeSplitChunks([]model.ChunkMeta{c.ToMeta(chunkContent)}, contentBytes, &nextIDNum, maxChunkBytesNew, client, filePath)...)
 			allChunks = append(allChunks, c)
 			nextIDNum++
 		}
@@ -308,8 +308,8 @@ func parseLineChunkOutput(output string) []lineChunk {
 	return chunks
 }
 
-// maybeSplitChunks splits oversized chunks into new sequential chunks
-func maybeSplitChunks(metas []model.ChunkMeta, content []byte, nextIDNum *int, maxSize int) []model.ChunkMeta {
+// maybeSplitChunks splits oversized chunks into new sequential chunks with individual summaries
+func maybeSplitChunks(metas []model.ChunkMeta, content []byte, nextIDNum *int, maxSize int, client *llm.Client, filePath string) []model.ChunkMeta {
 	var result []model.ChunkMeta
 	for _, m := range metas {
 		chunkSize := m.EndByte - m.StartByte
@@ -338,6 +338,13 @@ func maybeSplitChunks(metas []model.ChunkMeta, content []byte, nextIDNum *int, m
 				}
 			}
 			subContent := content[offset:end]
+			// Generate individual summary for each split chunk
+			summary := m.Summary
+			if client != nil {
+				if s, err := generateChunkSummary(client, filePath, string(subContent)); err == nil {
+					summary = s
+				}
+			}
 			subMeta := model.ChunkMeta{
 				ID:        fmt.Sprintf("chunk_%03d", *nextIDNum),
 				StartByte: offset,
@@ -345,7 +352,7 @@ func maybeSplitChunks(metas []model.ChunkMeta, content []byte, nextIDNum *int, m
 				Head30:    model.ComputeHead30(subContent),
 				Tail30:    model.ComputeTail30(subContent),
 				Hash:      model.ComputeChunkHash(subContent),
-				Summary:   m.Summary,
+				Summary:   summary,
 			}
 			result = append(result, subMeta)
 			offset = end
@@ -480,26 +487,20 @@ func IncrementalUpdateFile(client *llm.Client, dp *store.DataPaths, filePath, ma
 			// Aligned: reprocess [changeStart, alignPos)
 			newMetas := reprocessRegion(client, filePath, contentBytes, changeStart, alignPos, currentID)
 
-			// newMetas took N IDs starting from currentID
 			shift := len(newMetas) - 1
 			totalShift += shift
 
 			result = append(result, newMetas...)
 
-			// Adjust remaining chunks: byte offset + ID shift
+			// Shift byte offsets for remaining chunks (in-place), don't add to result yet
 			delta := alignPos - oldCF.Chunks[alignIdx].StartByte
 			for j := alignIdx; j < len(oldCF.Chunks); j++ {
-				adjusted := oldCF.Chunks[j]
-				adjusted.StartByte += delta
-				adjusted.EndByte += delta
-				adjusted.ID = shiftChunkID(adjusted.ID, totalShift)
-				result = append(result, adjusted)
+				oldCF.Chunks[j].StartByte += delta
+				oldCF.Chunks[j].EndByte += delta
 			}
 
-			// Continue checking from aligned chunk's next
-			// Re-verify the adjusted chunks in case more changed
-			// For now, trust alignment and break the loop
-			break
+			// Continue loop from alignIdx to re-verify subsequent chunks
+			i = alignIdx
 		} else {
 			// No alignment found: reprocess from changeStart to end
 			newMetas := reprocessToEnd(client, dp, filePath, contentBytes, changeStart, currentID)
