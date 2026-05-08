@@ -38,7 +38,7 @@
        set DEEPSEEK_API_KEY=sk-your-key-here
      保存后双击运行
 
-3. 启动后浏览器会自动打开 http://localhost:8880
+3. 启动后浏览器会自动打开 http://localhost:8080
 
 四、使用方法
 -------------------------------------------
@@ -65,7 +65,7 @@
   DEEPSEEK_API_KEY     DeepSeek API 密钥（必填）
   DEEPSEEK_BASE_URL    API 地址（默认 https://api.deepseek.com）
   MODEL                使用模型（默认 deepseek-v4-flash）
-  PORT                 服务端口（默认 8880）
+  PORT                 服务端口（默认 8080）
   DATA_DIR             数据目录（默认 ./data）
 
 六、目录说明
@@ -80,7 +80,7 @@
 -------------------------------------------
 
   Q: 浏览器打不开？
-  A: 手动访问 http://localhost:8880
+  A: 手动访问 http://localhost:8080
 
   Q: 提示 "markitdown not found"？
   A: 运行 pip install markitdown
