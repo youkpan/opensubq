@@ -71,8 +71,9 @@ pause
 REM 打开 DeepSeek 平台
 start "" "https://platform.deepseek.com/"
 
+:input_apikey
 echo.
-echo 请输入你的 DeepSeek API Key：
+echo 请输入你的 DeepSeek API Key （点击鼠标右键 粘贴）：
 echo.
 set /p API_KEY="API Key: "
 
@@ -83,8 +84,7 @@ if errorlevel 1 (
     echo 错误：API Key 格式不正确！
     echo 正确的格式应该以 "sk-" 开头
     echo.
-    pause
-    exit /b 1
+    goto input_apikey
 )
 
 echo.
@@ -95,8 +95,8 @@ echo.
 REM ====== 4. 更新启动脚本 ======
 echo [4/4] 正在配置启动脚本...
 
-REM 读取启动脚本并替换 API Key
-powershell -Command "(Get-Content '启动AI文件对话_Run_.bat') -replace 'set DEEPSEEK_API_KEY=sk-your-key-here', 'set DEEPSEEK_API_KEY=%API_KEY%' | Set-Content '启动AI文件对话_Run_.bat'"
+REM 使用 Python 替换 API Key
+python -c "import codecs; content = codecs.open('启动AI文件对话_Run_.bat', 'r', 'utf-8').read(); codecs.open('启动AI文件对话_Run_.bat', 'w', 'utf-8').write(content.replace('set DEEPSEEK_API_KEY=sk-your-key-here', 'set DEEPSEEK_API_KEY=%API_KEY%'))"
 
 echo [4/4] 启动脚本配置完成
 echo.
