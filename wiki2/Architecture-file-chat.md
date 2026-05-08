@@ -35,7 +35,7 @@ file-chat/
 │   ├── chat.go             # 主流程编排（并行文件处理）
 │   ├── chunker.go          # LLM 语义分片（并行30KB/段，20并发）
 │   ├── retriever.go        # 检索 + 上下文构建
-│   ├── all_handler.go      # @全部 两级检索
+│   ├── all_handler.go      # @全部 两级检索 + 全局大纲检索
 │   ├── outline.go          # 大纲读写（全局 + per-file）
 │   ├── summary.go          # files_summary.xml 管理 + LLM 摘要生成
 │   ├── path_extractor.go   # @路径 + @全部 提取
@@ -45,10 +45,14 @@ file-chat/
 │   └── sse.go              # SSE 流式写入 + 流代理
 ├── model/
 │   ├── openai.go           # OpenAI API 请求/响应类型
-│   └── types.go            # Chunk, Outline, FileRegistry, FileEntry
+│   └── types.go            # Chunk, Outline, FileRegistry, FileEntry, ChatFiles
 └── store/
-    ├── filestore.go        # 文件系统操作 + JobPaths + SafeFileName
-    └── registry.go         # files.json 读写 + hash 计算
+    ├── storage_paths.go    # DataPaths — 基于 hash 的文件存储路径管理
+    ├── filestore.go        # 文件系统操作（EnsureDir, WriteFile, SafeFileName 等）
+    ├── registry.go         # files.json 读写 + hash 计算
+    ├── chat_files.go       # chat-files.json 对话文件关联读写
+    ├── global_index.go     # 全局大纲和摘要读写 + 截断
+    └── filelock.go         # 文件锁（并发安全）
 ```
 
 ## 3. 数据模型
@@ -56,24 +60,27 @@ file-chat/
 ### 3.1 目录结构
 
 ```
-jobs/
+data/
 ├── files.json                                    # 全局文件注册表
-└── {jobId}/
-    ├── outline                                   # 全局聚合大纲
-    ├── files_summary.xml                         # 文件摘要索引
-    ├── outlines/                                 # per-file outline
-    │   ├── F__github_subq_data_report.pdf
-    │   └── F__github_subq_data_supplement.xlsx
-    ├── sources/                                  # 转换后源文本
-    │   ├── F__github_subq_data_report.pdf.txt
-    │   └── F__github_subq_data_supplement.xlsx.txt
-    └── chunks/                                   # 分片文件
-        ├── F__github_subq_data_report.pdf_chunk_001
-        ├── F__github_subq_data_report.pdf_chunk_002
-        └── F__github_subq_data_supplement.xlsx_chunk_001
+├── files/                                        # 文件数据（按路径hash分桶）
+│   ├── 75/ba/F__github_subq_file-chat_饮马流花河.txt/
+│   │   ├── outline                               # per-file 大纲
+│   │   ├── source                                # 转换后文本
+│   │   └── chunks/
+│   │       ├── chunk_001
+│   │       └── chunk_002
+│   └── ...
+├── chats/                                        # 对话数据
+│   └── {conversationID}/
+│       └── chat-files.json                       # 对话关联文件列表
+└── global/                                       # 全局索引
+    ├── global_outline                            # 全局大纲汇总
+    └── global_files_summary.xml                  # 全局文件摘要
 ```
 
-文件名通过 `SafeFileName` 生成：替换 `\`、`/`、`:` 为 `_`（兼容 Windows 路径）。
+文件存储路径规则：`data/files/{路径hash前2位}/{路径hash 3~4位}/{SafeFileName}/`
+- hash 使用文件**绝对路径**的 MD5（不是文件内容 hash）
+- 文件名通过 `SafeFileName` 生成：替换 `\`、`/`、`:` 为 `_`
 
 ### 3.2 大纲格式
 
@@ -86,7 +93,7 @@ chunk_002|F:\github\data\report.pdf|关于Q4市场展望的策略|51|120
 
 | 字段 | 说明 |
 |------|------|
-| chunk_id | 片段唯一标识（chunk_NNN） |
+| chunk_id | 片段唯一标识（chunk_NNN，全局递增） |
 | file_path | 文件绝对路径 |
 | summary | LLM 生成的片段摘要（50~150字） |
 | start_line | 起始行号 |
@@ -101,13 +108,15 @@ chunk_002|F:\github\data\report.pdf|关于Q4市场展望的策略|51|120
       "hash": "a1b2c3d4e5f6",
       "mod_time": "2026-05-07T10:30:00+08:00",
       "size": 153600,
-      "processed_at": "2026-05-07T10:31:00+08:00"
+      "processed_at": "2026-05-07T10:31:00+08:00",
+      "chunk_count": 12,
+      "summary": "该文件是Q3季度财务报告，包含营收分析、市场展望等..."
     }
   }
 }
 ```
 
-### 3.4 files_summary.xml
+### 3.4 global_files_summary.xml
 
 ```xml
 <files>
@@ -115,19 +124,34 @@ chunk_002|F:\github\data\report.pdf|关于Q4市场展望的策略|51|120
 </files>
 ```
 
-### 3.5 核心类型
+### 3.5 chat-files.json
+
+```json
+{
+  "conversation_id": "abc123",
+  "files": [
+    "F:\\github\\data\\report.pdf",
+    "F:\\github\\data\\supplement.xlsx"
+  ],
+  "folders": [
+    "F:\\github\\data"
+  ],
+  "updated_at": "2026-05-08T10:30:00+08:00"
+}
+```
+
+### 3.6 核心类型
 
 ```go
 type Chunk struct {
-    ID        string // chunk_001
-    FilePath  string
+    ID        string // chunk_001（全局唯一）
+    FilePath  string // 绝对路径
     Summary   string // LLM 生成的摘要
     StartLine int
     EndLine   int
 }
 
 type Outline struct {
-    JobID  string
     Chunks []Chunk
 }
 
@@ -136,10 +160,19 @@ type FileEntry struct {
     ModTime     string
     Size        int64
     ProcessedAt string
+    ChunkCount  int
+    Summary     string
 }
 
 type FileRegistry struct {
     Files map[string]*FileEntry
+}
+
+type ChatFiles struct {
+    ConversationID string
+    Files          []string
+    Folders        []string
+    UpdatedAt      string
 }
 ```
 
@@ -150,36 +183,58 @@ type FileRegistry struct {
 ```
 收到 /v1/chat/completions 请求（含 X-Conversation-Id header）
     │
-    ├─ 1. 提取 @路径 和 @全部 标记
+    ├─ 1. 确定 conversation ID（header 或 MD5 fallback）
     │
-    ├─ 2. 确定 job ID（X-Conversation-Id 或 MD5 fallback）
+    ├─ 2. 提取 @路径 和 @全部 标记
     │
-    ├─ 3. 加载 files.json，检测文件变更
+    ├─ 3. 初始化 data/ 目录结构
+    │
+    ├─ 4. 加载全局注册表 data/files.json + 全局大纲
+    │
+    ├─ 5. 解析路径，检测文件变更
+    │      ├─ registry 无记录 → 新文件，需处理
     │      ├─ size+modTime 未变 → 跳过
     │      ├─ hash 未变 → 跳过
-    │      └─ 文件已变化 → 清理旧数据
+    │      └─ 文件已变化 → 清理旧数据（加文件锁）
     │
-    ├─ 4. 并行处理文件（最多 20 并发）
+    ├─ 6. 并行处理文件（最多 20 并发，每文件加锁）
     │      ├─ 文档格式 → markitdown 转换
     │      ├─ < 15KB → LLM 生成摘要，存为单 chunk
     │      └─ ≥ 15KB → 并行 LLM 语义分片
     │
-    ├─ 5. 顺序组装结果
-    │      ├─ 追加全局 outline
-    │      ├─ 写 per-file outline
-    │      ├─ LLM 生成文件摘要 → files_summary.xml
-    │      └─ 更新 files.json
+    ├─ 7. 顺序组装结果
+    │      ├─ 追加到全局大纲 data/global/global_outline
+    │      ├─ 写 per-file outline（data/files/{hash}/outline）
+    │      ├─ LLM 生成文件摘要 → data/global/global_files_summary.xml
+    │      ├─ 更新全局注册表 data/files.json
+    │      └─ 更新对话文件列表 data/chats/{id}/chat-files.json
     │
-    ├─ 6. 检索
-    │      ├─ @全部 → 两级检索（files_summary → per-file outline）
-    │      └─ @path → 大纲 + query → LLM 排序 chunk
+    ├─ 8. 检索
+    │      ├─ @全部 → 两级检索（全局摘要 → per-file outline）
+    │      │         fallback: 全局大纲直接检索（超1MB截断）
+    │      └─ @path → 全局大纲筛选 → LLM 排序 chunk
     │
-    ├─ 7. 读取 top 20 chunk + 扩展上下文 → 拼接 prompt
+    ├─ 9. 读取 top 20 chunk + 扩展上下文 → 拼接 prompt
     │
-    └─ 8. SSE 流式转发 DeepSeek 回复
+    └─ 10. SSE 流式转发 DeepSeek 回复
 ```
 
-### 4.2 并行语义分片（chunker）
+### 4.2 文件存储路径
+
+```
+文件: F:\github\data\report.pdf
+路径 hash (MD5): 75ba443e5ea3c06e...
+SafeFileName: F__github_data_report.pdf
+
+存储路径: data/files/75/ba/F__github_data_report.pdf/
+          ├── outline          # per-file 大纲
+          ├── source           # 转换后文本
+          └── chunks/
+              ├── chunk_001    # 分片内容
+              └── chunk_002
+```
+
+### 4.3 并行语义分片（chunker）
 
 ```
 输入：大文件（≥ 15KB）
@@ -194,29 +249,34 @@ type FileRegistry struct {
     │
     ├─ 3. 等待全部完成
     │
-    ├─ 4. 按段顺序拼接，统一重编号 chunk ID
+    ├─ 4. 按段顺序拼接，统一重编号 chunk ID（全局递增）
     │
-    └─ 5. 写入 chunk 文件
+    └─ 5. 写入 chunk 文件到 data/files/{hash}/chunks/
     （失败段自动 fallback 为固定切分）
 ```
 
-### 4.3 @全部 两级检索（all_handler）
+### 4.4 @全部 两级检索（all_handler）
 
 ```
 输入：query + @全部
     │
-    ├─ 1. 读取 files_summary.xml
+    ├─ 1. 读取全局摘要 data/global/global_files_summary.xml
     │
-    ├─ 2. LLM 一级检索：文件摘要 + query → 选择相关文件（≤5个）
+    ├─ 2. LLM 一级检索：全局摘要 + query → 选择相关文件（≤5个）
     │
-    ├─ 3. 加载相关文件的 per-file outline
+    ├─ 3. 加载相关文件的 per-file outline（从 data/files/{hash}/outline）
     │
     ├─ 4. LLM 二级检索：合并 outline + query → 选择 top 20 chunks
     │
-    └─ 5. BuildContext 拼接上下文
+    ├─ 5. 如果两级检索无结果 → fallback 到全局大纲直接检索
+    │      ├─ 读取 data/global/global_outline
+    │      ├─ 超过 1MB → 截断到最后 1MB（按换行截断）
+    │      └─ LLM 检索 top 20 chunks
+    │
+    └─ 6. BuildContext 拼接上下文
 ```
 
-### 4.4 检索 + 上下文构建（retriever）
+### 4.5 检索 + 上下文构建（retriever）
 
 ```
 输入：大纲 + 用户 query
@@ -225,14 +285,14 @@ type FileRegistry struct {
     │
     ├─ 2. 取 top 20，按原顺序排列
     │
-    ├─ 3. 读取 chunk 文件 + 从 sources/ 扩展上下文
+    ├─ 3. 读取 chunk 文件 + 从 source 扩展上下文
     │      - 上下各扩展 500~1200 byte
     │      - 截断：500B遇\n\n / 800B遇\n / 1200B强截
     │
     └─ 4. 非连续 chunk 用 <chunk-{id}> 包裹
 ```
 
-### 4.5 文件变更检测
+### 4.6 文件变更检测
 
 ```
 处理文件前：
@@ -243,12 +303,23 @@ type FileRegistry struct {
     │
     ├─ modTime 变了 → 计算 MD5 hash
     │   ├─ hash 未变 → 跳过
-    │   └─ hash 变了 → 清理旧数据 + 重新处理
+    │   └─ hash 变了 → 加文件锁 → 清理旧数据 + 重新处理
     │
     └─ 处理完成后更新 files.json
 ```
 
-### 4.6 最终 Prompt 组装
+### 4.7 文件锁机制
+
+```
+并发处理同一文件时：
+    │
+    ├─ 创建 {filedir}.lock 文件（O_EXCL 原子操作）
+    ├─ 获取成功 → 执行处理
+    ├─ 获取失败 → 轮询等待（100ms间隔，最多10s）
+    └─ 处理完成 → 删除 lock 文件
+```
+
+### 4.8 最终 Prompt 组装
 
 ```
 system: 文档问答助手角色设定
@@ -313,13 +384,14 @@ data: [DONE]
 
 - 所有待处理文件放入 goroutine 池
 - 信号量控制最多 20 并发
-- 文件处理完成后顺序组装 outline、summary、registry
+- 每个文件加文件锁，避免并发冲突
+- 文件处理完成后顺序组装全局大纲、摘要、注册表
 
 ### 6.2 文件内并行（chunker.go）
 
 - 大文件按 30KB 分段（`splitSegments`）
 - 每段独立 goroutine 调用 LLM
-- 全部完成后按段顺序拼接，统一重编号 chunk ID
+- 全部完成后按段顺序拼接，统一重编号 chunk ID（全局递增）
 - 失败段自动 fallback
 
 ## 7. 配置项
@@ -330,7 +402,7 @@ data: [DONE]
 | API URL | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API 地址 |
 | 模型 | `MODEL` | `deepseek-v4-flash` | 使用模型 |
 | 端口 | `PORT` | `8080` | HTTP 服务端口 |
-| Job 目录 | `JOBS_DIR` | `./jobs` | job 存储目录 |
+| 数据目录 | `DATA_DIR` | `./data` | 数据存储目录 |
 | markitdown | `MARKITDOWN_CMD` | `markitdown` | markitdown 命令路径 |
 | 检索数量 | `MAX_RETRIEVE` | `20` | 最大检索 chunk 数 |
 | 小文件阈值 | `SMALL_FILE_SIZE` | `15360` | 15KB，低于此直接存 chunk |
@@ -348,6 +420,8 @@ data: [DONE]
 | 分片段 LLM 调用失败 | fallback 为单 chunk |
 | 大纲为空 | 直接透传请求给 DeepSeek |
 | LLM 摘要生成失败 | 使用截断内容作为 fallback |
+| 文件锁超时 | 返回错误，跳过该文件 |
+| 全局大纲超 1MB | 截断到最后 1MB（按换行截断） |
 
 ## 9. NextChat 修改
 

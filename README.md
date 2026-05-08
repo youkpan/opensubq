@@ -19,7 +19,9 @@ A Go-based long-text intelligent Q&A system using **Context Engineering** with D
 - LLM-based semantic chunking — auto-splits long documents into meaningful chunks with summaries
 - Two-level retrieval: file summaries → chunk outlines → top-K chunks
 - `@path` to reference specific files, `@全部`/`@all` to search all indexed files
+- Global file index — all conversations share global outline and summary, `@all` works across conversations
 - File change detection (size → modTime → MD5 hash) avoids reprocessing
+- File locking for concurrent-safe processing
 - Parallel processing: 20 concurrent goroutines, 30KB segments per worker
 - SSE streaming via OpenAI-compatible `/v1/chat/completions` API
 - Supports PDF, Excel, Word, etc. via markitdown conversion
@@ -28,10 +30,25 @@ A Go-based long-text intelligent Q&A system using **Context Engineering** with D
 ```
 NextChat ──HTTP/SSE──▶ file-chat (Go) ──HTTP/SSE──▶ DeepSeek API
                             │
+                            ├── Global file index (cross-conversation)
                             ├── LLM semantic chunking (parallel 20 workers)
-                            ├── Per-file outline + files_summary.xml
-                            ├── Two-level retrieval (@全部/@all)
+                            ├── Hash-based file storage (deduplication)
                             └── markitdown document conversion
+```
+
+**Data Storage:**
+```
+data/
+├── files.json                    # Global file registry
+├── files/{hash[:2]}/{hash[2:4]}/{name}/
+│   ├── outline                   # Per-file outline
+│   ├── source                    # Converted text
+│   └── chunks/                   # Chunk files
+├── chats/{conversationID}/
+│   └── chat-files.json           # Per-conversation file list
+└── global/
+    ├── global_outline            # Global outline (all files)
+    └── global_files_summary.xml  # Global file summaries
 ```
 
 **Quick Start:**

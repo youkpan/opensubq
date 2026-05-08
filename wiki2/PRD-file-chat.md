@@ -19,7 +19,9 @@
 | OpenAI API 兼容 | 可直接接入 NextChat |
 | 文件变更检测 | 基于 MD5 hash + 修改时间的变更检测，避免重复处理 |
 | @全部 | 引用所有已处理文件，两级检索（文件→片段） |
+| 全局文件索引 | 所有对话共享全局大纲和摘要，@all 可检索所有历史文件 |
 | 并行处理 | 文件间和大文件内均支持 20 并发并行分片 |
+| 文件锁 | 并发处理同一文件时加锁，避免数据冲突 |
 | 对话 ID | NextChat 通过 `X-Conversation-Id` header 传递会话 ID |
 
 ## 3. 用户流程
@@ -33,8 +35,8 @@
 2. markitdown 转换为文本
 3. ≥15KB → LLM 语义分片（30KB/段，20并发） → 生成大纲 + chunk 文件
 4. LLM 为每个 chunk 生成摘要
-5. LLM 为文件生成整体摘要，写入 files_summary.xml
-6. 大纲 + query → LLM 选出 top 20 chunk
+5. LLM 为文件生成整体摘要，写入全局 files_summary.xml
+6. 全局大纲 + query → LLM 选出 top 20 chunk
 7. 读取 chunk + 扩展上下文 → 拼接 prompt
 8. 调用 DeepSeek → SSE 流式返回回答
 ```
@@ -45,21 +47,22 @@
 用户: 再看看 @/data/supplement.xlsx，和之前的数据对比下
 
 1. 提取新路径，检查 files.json（hash 不变则跳过）
-2. 处理新文件（增量分片）
-3. 更新大纲、files_summary.xml
+2. 处理新文件（增量分片，加文件锁）
+3. 更新全局大纲、全局 files_summary.xml
 4. 新大纲 + 新 query → 检索 → 回答
 ```
 
-### 3.3 @全部 检索
+### 3.3 @全部 检索（跨对话）
 
 ```
 用户: 总结下所有文件的关键信息 @全部
 
-1. 读取 files_summary.xml（所有文件摘要）
-2. LLM 根据查询匹配相关文件（一级检索）
-3. 加载匹配文件的 per-file outline
+1. 读取全局 files_summary.xml（所有文件摘要，跨对话共享）
+2. LLM 根据查询匹配相关文件（一级检索，最多5个）
+3. 加载匹配文件的 per-file outline（从 data/files/{hash}/outline）
 4. LLM 从 outline 中选择相关 chunks（二级检索）
-5. 拼接上下文，生成回答
+5. 如果两级检索无结果 → 全局大纲直接检索（超1MB截断）
+6. 拼接上下文，生成回答
 ```
 
 ### 3.4 普通对话（无 @文件）
@@ -83,25 +86,26 @@
 
 ### 4.2 文件变更检测
 
-- 全局注册表 `files.json` 记录文件 hash、修改时间、大小
+- 全局注册表 `data/files.json` 记录文件 hash、修改时间、大小
 - 三级检测：size → modTime → MD5 hash
 - 文件未变化：跳过处理
-- 文件已变化：自动清理旧 chunks/outline/summary，重新处理
+- 文件已变化：加文件锁，清理旧数据，重新处理
 
 ### 4.3 LLM 语义分片（并行）
 
 - 大文件按 30KB 分段
 - 最多 20 个 goroutine 并行处理各段
 - 每段 LLM 输出 1~3 个片段（chunk_id|路径|摘要|起始行|结束行）
-- 全部完成后按段顺序拼接，统一重编号 chunk ID
+- 全部完成后按段顺序拼接，统一重编号 chunk ID（全局递增）
 - 每段处理失败时自动 fallback 为固定切分
 
 ### 4.4 大纲管理
 
-- 全局大纲：`jobs/{jobId}/outline`，所有 chunk 的聚合视图
-- 文件大纲：`jobs/{jobId}/outlines/{safeName}`，每文件独立
-- 文件摘要：`jobs/{jobId}/files_summary.xml`，文件路径 + LLM 生成的整体摘要
+- 全局大纲：`data/global/global_outline`，所有文件 chunk 的聚合视图
+- 文件大纲：`data/files/{hash}/outline`，每文件独立
+- 文件摘要：`data/global/global_files_summary.xml`，文件路径 + LLM 生成的整体摘要
 - 所有 summary 均由 LLM 生成（50~150 字）
+- 全局大纲超过 1MB 时，检索取最后 1MB（按换行截断）
 
 ### 4.5 智能检索
 
@@ -130,9 +134,11 @@
 ### 4.6 @全部 支持
 
 - 用户输入 `@全部` 时触发两级检索
-- 一级：files_summary.xml + query → LLM 选择相关文件（最多5个）
+- 一级：全局 files_summary.xml + query → LLM 选择相关文件（最多5个）
 - 二级：选中文件的 per-file outline + query → LLM 选择相关 chunks
+- Fallback：全局大纲直接检索（超1MB截断到最后1MB）
 - 复用 BuildContext 拼接最终上下文
+- **跨对话**：所有对话共享全局索引，@all 可检索所有历史处理过的文件
 
 ### 4.7 API 接口
 
@@ -149,7 +155,7 @@
 ### 4.8 对话 ID
 
 - NextChat 通过 `X-Conversation-Id` header 传递 session ID
-- 后端优先使用此 ID 作为 job ID
+- 后端优先使用此 ID 标识对话
 - 为空时 fallback 为首条 user message 的 MD5 前6位
 - 已修改 NextChat `app/client/api.ts`（getHeaders）和 `app/api/common.ts`（代理转发）
 
@@ -167,17 +173,20 @@
 
 ### 6.1 存储结构
 ```
-jobs/
-├── files.json                         # 全局文件注册表（hash+modTime+size）
-└── {jobId}/
-    ├── outline                        # 全局聚合大纲
-    ├── files_summary.xml              # 文件摘要索引
-    ├── outlines/                      # 每文件独立大纲
-    │   └── {safeFileName}
-    ├── sources/                       # 转换后源文本
-    │   └── {safeFileName}.txt
-    └── chunks/                        # 分片文件
-        └── {safeFileName}_{chunkId}
+data/
+├── files.json                         # 全局文件注册表（hash+modTime+size+chunkCount+summary）
+├── files/                             # 文件数据（按路径hash分桶）
+│   └── {hash[:2]}/{hash[2:4]}/{safeName}/
+│       ├── outline                    # per-file 大纲
+│       ├── source                     # 转换后源文本
+│       └── chunks/                    # 分片文件
+│           └── chunk_NNN
+├── chats/                             # 对话数据
+│   └── {conversationID}/
+│       └── chat-files.json            # 对话关联文件列表
+└── global/                            # 全局索引
+    ├── global_outline                 # 全局聚合大纲
+    └── global_files_summary.xml       # 全局文件摘要
 ```
 
 ### 6.2 files.json
@@ -188,17 +197,29 @@ jobs/
       "hash": "a1b2c3d4",
       "mod_time": "2026-05-07T10:30:00Z",
       "size": 15360,
-      "processed_at": "2026-05-07T10:31:00Z"
+      "processed_at": "2026-05-07T10:31:00Z",
+      "chunk_count": 8,
+      "summary": "Go 源文件，实现 HTTP 路由和中间件..."
     }
   }
 }
 ```
 
-### 6.3 files_summary.xml
+### 6.3 global_files_summary.xml
 ```xml
 <files>
   <file path="/path/to/file.go">LLM 生成的文件摘要...</file>
 </files>
+```
+
+### 6.4 chat-files.json
+```json
+{
+  "conversation_id": "abc123",
+  "files": ["/path/to/file1.go", "/path/to/file2.pdf"],
+  "folders": ["/path/to/data"],
+  "updated_at": "2026-05-08T10:30:00+08:00"
+}
 ```
 
 ## 7. 约束

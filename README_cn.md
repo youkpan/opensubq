@@ -19,7 +19,9 @@
 - LLM 语义分片 — 自动将长文档拆分为有意义的片段并生成摘要
 - 两级检索：文件摘要 → 片段大纲 → Top-K 片段
 - `@路径` 引用指定文件，`@全部`/`@all` 搜索所有已索引文件
+- 全局文件索引 — 所有对话共享全局大纲和摘要，`@all` 可跨对话检索
 - 文件变更检测（size → modTime → MD5 hash），避免重复处理
+- 文件锁机制 — 并发处理同一文件时加锁，避免数据冲突
 - 并行处理：20 并发 goroutine，每 worker 处理 30KB
 - 通过 OpenAI 兼容的 `/v1/chat/completions` API 提供 SSE 流式输出
 - 支持 PDF、Excel、Word 等，通过 markitdown 转换
@@ -28,10 +30,25 @@
 ```
 NextChat ──HTTP/SSE──▶ file-chat (Go) ──HTTP/SSE──▶ DeepSeek API
                             │
+                            ├── 全局文件索引（跨对话共享）
                             ├── LLM 语义分片（20 并发）
-                            ├── Per-file outline + files_summary.xml
-                            ├── 两级检索（@全部/@all）
+                            ├── 基于 hash 的文件存储（去重）
                             └── markitdown 文档转换
+```
+
+**数据存储：**
+```
+data/
+├── files.json                    # 全局文件注册表
+├── files/{hash[:2]}/{hash[2:4]}/{name}/
+│   ├── outline                   # 每文件大纲
+│   ├── source                    # 转换后文本
+│   └── chunks/                   # 分片文件
+├── chats/{conversationID}/
+│   └── chat-files.json           # 对话关联文件列表
+└── global/
+    ├── global_outline            # 全局大纲（所有文件）
+    └── global_files_summary.xml  # 全局文件摘要
 ```
 
 **快速开始：**
