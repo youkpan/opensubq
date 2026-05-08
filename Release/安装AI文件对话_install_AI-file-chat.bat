@@ -95,8 +95,8 @@ echo.
 REM ====== 4. 更新启动脚本 ======
 echo [4/4] 正在配置启动脚本...
 
-REM 使用 Python 替换 API Key
-python -c "import codecs; content = codecs.open('启动AI文件对话_Run_.bat', 'r', 'utf-8').read(); codecs.open('启动AI文件对话_Run_.bat', 'w', 'utf-8').write(content.replace('set DEEPSEEK_API_KEY=sk-your-key-here', 'set DEEPSEEK_API_KEY=%API_KEY%'))"
+REM 使用 Python 替换 API Key（无论现有值是什么）
+python -c "import re,codecs; content = codecs.open('启动AI文件对话_Run_.bat', 'r', 'utf-8').read(); codecs.open('启动AI文件对话_Run_.bat', 'w', 'utf-8').write(re.sub(r'set DEEPSEEK_API_KEY=.*', 'set DEEPSEEK_API_KEY=%API_KEY%', content))"
 
 echo [4/4] 启动脚本配置完成
 echo.
