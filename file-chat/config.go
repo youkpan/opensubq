@@ -35,7 +35,7 @@ func LoadConfig() *Config {
 		DeepSeekAPIKey:  getEnv("DEEPSEEK_API_KEY", ""),
 		DeepSeekBaseURL: getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 		Model:           getEnv("MODEL", "deepseek-v4-flash"),
-		Port:            getEnv("PORT", "8080"),
+		Port:            getEnv("PORT", "8880"),
 		DataDir:         getEnv("DATA_DIR", "./data"),
 		MarkitdownCmd:   getEnv("MARKITDOWN_CMD", "markitdown"),
 		ChunkTokens:     getEnvInt("CHUNK_TOKENS", 2000),

@@ -2,6 +2,6 @@ const { defineConfig } = require('@playwright/test');
 module.exports = defineConfig({
   testDir: './scripts',
   testMatch: 'test-*.js',
-  use: { baseURL: 'http://localhost:8080' },
+  use: { baseURL: 'http://localhost:8880' },
   reporter: 'list',
 });

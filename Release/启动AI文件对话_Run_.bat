@@ -33,8 +33,8 @@ echo ============================================
 echo    AI 文件对话服务正在启动...
 echo ============================================
 echo.
-echo 浏览器将自动打开 http://localhost:8080
+echo 浏览器将自动打开 http://localhost:8880
 echo.
 
-start "" "http://localhost:8080"
+start "" "http://localhost:8880"
 file-chat.exe

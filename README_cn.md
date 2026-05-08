@@ -63,7 +63,7 @@ cd file-chat && go build -o file-chat
 set DEEPSEEK_API_KEY=your-key-here
 file-chat.exe
 
-# 部署 NextChat，API 地址设为 http://localhost:8080
+# 部署 NextChat，API 地址设为 http://localhost:8880
 ```
 
 详见 [技术架构](./wiki2/Architecture-file-chat.md) 和 [PRD](./wiki2/PRD-file-chat.md)。
@@ -72,7 +72,7 @@ file-chat.exe
 1. 启动后端：双击 `file-chat/start-with-key-pan.bat`
 2. 启动前端：双击 `scripts/start-nextchat.bat`
 3. 打开 http://localhost:3000，进入设置：
-   - 自定义接口地址：`http://localhost:8080`
+   - 自定义接口地址：`http://localhost:8880`
    - API Key：填写你的 DeepSeek API Key
    - 模型名称：`deepseek-v4-flash`，模型提供商选择 **deepseek-chat**
 4. 新建对话，输入 `@文件绝对路径\文件名` + 你的提示词，发送即可

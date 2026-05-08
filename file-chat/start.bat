@@ -20,7 +20,7 @@ file-chat.exe
 REM Other config (uncomment to customize):
 REM set DEEPSEEK_BASE_URL=https://api.deepseek.com
 REM set MODEL=deepseek-v4-flash
-REM set PORT=8080
+REM set PORT=8880
 REM set JOBS_DIR=./jobs
 REM set MARKITDOWN_CMD=markitdown
 REM set MAX_RETRIEVE=20

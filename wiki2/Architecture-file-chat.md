@@ -457,7 +457,7 @@ data: [DONE]
 | API Key | `DEEPSEEK_API_KEY` | - | DeepSeek API 密钥（必填） |
 | API URL | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API 地址 |
 | 模型 | `MODEL` | `deepseek-v4-flash` | 使用模型 |
-| 端口 | `PORT` | `8080` | HTTP 服务端口 |
+| 端口 | `PORT` | `8880` | HTTP 服务端口 |
 | 数据目录 | `DATA_DIR` | `./data` | 数据存储目录 |
 | markitdown | `MARKITDOWN_CMD` | `markitdown` | markitdown 命令路径 |
 | 检索数量 | `MAX_RETRIEVE` | `20` | 最大检索 chunk 数 |
@@ -499,5 +499,5 @@ data: [DONE]
 3. 配置 API Key:
    - 方式1: set DEEPSEEK_API_KEY=xxx && start.bat
    - 方式2: 编辑 start-with-key.bat 填入 key，双击启动
-4. 部署 NextChat，API 地址指向 http://localhost:8080
+4. 部署 NextChat，API 地址指向 http://localhost:8880
 ```

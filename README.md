@@ -63,7 +63,7 @@ cd file-chat && go build -o file-chat
 set DEEPSEEK_API_KEY=your-key-here
 file-chat.exe
 
-# Deploy NextChat, set API endpoint to http://localhost:8080
+# Deploy NextChat, set API endpoint to http://localhost:8880
 ```
 
 See [Architecture](./wiki2/Architecture-file-chat.md) and [PRD](./wiki2/PRD-file-chat.md) for details.
@@ -72,7 +72,7 @@ See [Architecture](./wiki2/Architecture-file-chat.md) and [PRD](./wiki2/PRD-file
 1. Start backend: double-click `file-chat/start-with-key-pan.bat`
 2. Start NextChat: double-click `scripts/start-nextchat.bat`
 3. Open http://localhost:3000, go to Settings:
-   - Custom API endpoint: `http://localhost:8080`
+   - Custom API endpoint: `http://localhost:8880`
    - API Key: your DeepSeek API Key
    - Model: `deepseek-v4-flash`, select **deepseek-chat** as provider
 4. New chat, type `@absolute\path\to\file.txt` + your question, send

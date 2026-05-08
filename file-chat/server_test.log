@@ -1,5 +1,5 @@
 2026/05/08 14:58:42 [STATIC] serving from ./dist
-2026/05/08 14:58:42 file-chat server starting on :8880
+2026/05/08 14:58:42 file-chat server starting on :8080
 2026/05/08 14:58:43 [BROWSER] failed to open browser: exec: "rundll32": executable file not found in %PATH%
 2026/05/08 14:59:14 [REQUEST] POST /v1/chat/completions from [::1]:11179
 2026/05/08 14:59:32 [REQUEST] POST /v1/chat/completions from [::1]:11190
@@ -24,3 +24,4 @@
 2026/05/08 15:00:20 [Step 10] 选中 chunks: [chunk_001(testnovel.txt:0-7970)]
 2026/05/08 15:00:20 [Step 11] 上下文构建完成: 8645 字符, 8645 bytes
 2026/05/08 15:00:20 [Step 12] 最终消息: 4 条, 总耗时 47.1s
+exit status 1

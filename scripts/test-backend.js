@@ -2,7 +2,7 @@
 // 用法: npx playwright test scripts/test-backend.js
 
 const { test, expect } = require('@playwright/test');
-const BASE = 'http://localhost:8080';
+const BASE = 'http://localhost:8880';
 const FILE = 'F:/github/subq/file-chat/testfile.txt';
 test.setTimeout(60000);
 

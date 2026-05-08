@@ -33,3 +33,35 @@
 2026/05/08 14:36:18 [Step 10] 选中 chunks: [chunk_001(testnovel.txt:0-7970) chunk_016(testnovel.txt:69150-73478) chunk_019(testnovel.txt:81464-87310) chunk_021(testnovel.txt:87310-91743) chunk_022(testnovel.txt:91743-93809) chunk_023(testnovel.txt:93875-101586) chunk_024(testnovel.txt:101586-102786) chunk_026(testnovel.txt:102786-110705) chunk_027(testnovel.txt:110705-118679) chunk_028(testnovel.txt:118679-121407) chunk_013(testnovel.txt:56109-61203)]
 2026/05/08 14:36:18 [Step 11] 上下文构建完成: 66987 字符, 66987 bytes
 2026/05/08 14:36:18 [Step 12] 最终消息: 6 条, 总耗时 7.1s
+2026/05/08 14:43:47 [REQUEST] POST /v1/chat/completions from [::1]:10891
+2026/05/08 14:43:47 [Step 1] conversationID=test-all-001
+2026/05/08 14:43:47 [Step 2] 提取路径: paths=[], hasAll=true
+2026/05/08 14:43:47 [Step 3] 初始化数据目录: ./data
+2026/05/08 14:43:47 [Step 4] 加载注册表: 1 个文件
+2026/05/08 14:43:47 [Step 5] 文件清单: 待处理=0, 跳过(未变更)=1
+2026/05/08 14:43:47 [Step 8] 全局大纲: 21 个 chunks
+2026/05/08 14:43:47 [Step 9] 查询: " С˵�ﴺ��С����˭"
+2026/05/08 14:43:47 [Step 10] 开始检索 (hasAll=true, maxRetrieve=20)
+2026/05/08 14:43:53 [Step 10] @全部检索: 1 个 chunks
+2026/05/08 14:43:53 [Step 10] 选中 chunks: [chunk_001(testnovel.txt:0-7970)]
+2026/05/08 14:43:53 [Step 11] 上下文构建完成: 8645 字符, 8645 bytes
+2026/05/08 14:43:53 [Step 12] 最终消息: 4 条, 总耗时 5.8s
+2026/05/08 14:44:19 [REQUEST] POST /v1/chat/completions from [::1]:10900
+2026/05/08 14:44:19 [Step 1] conversationID=test-v3-001
+2026/05/08 14:44:19 [Step 2] 提取路径: paths=[F:/github/subq/file-chat/testnovel.txt], hasAll=false
+2026/05/08 14:44:19 [Step 3] 初始化数据目录: ./data
+2026/05/08 14:44:19 [Step 4] 加载注册表: 1 个文件
+2026/05/08 14:44:19 [Step 5] 文件已变更，增量更新: F:\github\subq\file-chat\testnovel.txt
+2026/05/08 14:44:19 [Step 5] 文件清单: 待处理=1, 跳过(未变更)=0
+2026/05/08 14:44:19 [Step 5]   待处理: F:\github\subq\file-chat\testnovel.txt
+2026/05/08 14:44:19 [Step 6] 开始并行处理 1 个文件 (并发上限=20)
+2026/05/08 14:44:29 [Step 6]   文件处理失败 [F:\github\subq\file-chat\testnovel.txt]: timeout acquiring lock for F:\github\subq\file-chat\testnovel.txt (10.0s)
+2026/05/08 14:44:29 [Step 6] 并行处理完成 (10.0s)
+2026/05/08 14:44:29 [Step 7] 组装结果: per-file outline + summary + chunks.json + registry
+2026/05/08 14:44:29 [Step 8] 全局大纲: 21 个 chunks
+2026/05/08 14:44:29 [Step 9] 查询: "����С����˭ "
+2026/05/08 14:44:29 [Step 10] 开始检索 (hasAll=false, maxRetrieve=20)
+2026/05/08 14:44:34 [Step 10] 路径检索: 1 个 chunks
+2026/05/08 14:44:34 [Step 10] 选中 chunks: [chunk_001(testnovel.txt:0-7970)]
+2026/05/08 14:44:34 [Step 11] 上下文构建完成: 8645 字符, 8645 bytes
+2026/05/08 14:44:34 [Step 12] 最终消息: 4 条, 总耗时 14.7s

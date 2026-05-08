@@ -237,5 +237,5 @@ data/
 2. 编译: go build -o file-chat
 3. 配置: set DEEPSEEK_API_KEY=xxx
 4. 运行: start.bat 或 start-with-key.bat
-5. 部署 NextChat，API 地址指向 http://localhost:8080
+5. 部署 NextChat，API 地址指向 http://localhost:8880
 ```

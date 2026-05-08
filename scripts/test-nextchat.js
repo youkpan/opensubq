@@ -1,10 +1,10 @@
 // Playwright 测试：NextChat + file-chat 端到端测试
 // 用法: npx playwright test scripts/test-nextchat.js
-// 前提: file-chat 运行在 localhost:8080, NextChat 运行在 localhost:3000
+// 前提: file-chat 运行在 localhost:8880, NextChat 运行在 localhost:3000
 
 const { test, expect } = require('@playwright/test');
 
-const FILE_CHAT_URL = 'http://localhost:8080';
+const FILE_CHAT_URL = 'http://localhost:8880';
 const NEXTCHAT_URL = 'http://localhost:3000';
 const TEST_FILE = 'F:/github/subq/file-chat/testfile.txt';
 
