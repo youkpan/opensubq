@@ -28,10 +28,12 @@ echo [2/4] 正在准备 Release 目录...
 cd /d "%~dp0"
 if not exist Release mkdir Release
 if exist Release\dist rmdir /S /Q Release\dist
+if exist file-chat\dist rmdir /S /Q file-chat\dist
 mkdir Release\dist
 
 REM 复制 NextChat 静态文件到 Release/dist/
 xcopy /E /I /Y "NextChat\out\*" "Release\dist\" >nul
+xcopy /E /I /Y "NextChat\out\*" "file-chat\dist\" >nul
 echo [2/4] 静态文件已复制到 Release\dist\
 echo.
 
