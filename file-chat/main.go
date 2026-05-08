@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -157,6 +158,22 @@ func getDistDir() string {
 func main() {
 	config := LoadConfig()
 
+	// 显示硬件 ID
+	hardwareID := GetHardwareID()
+	fmt.Printf("======================================================\n")
+	fmt.Printf("  File-Chat Server\n")
+	fmt.Printf("======================================================\n")
+	fmt.Printf("  Hardware ID: %s\n", hardwareID[:16])
+	fmt.Printf("======================================================\n\n")
+
+	// 显示授权联系信息
+	fmt.Printf("======================================================\n")
+	fmt.Printf("  授权联系 / License Contact\n")
+	fmt.Printf("======================================================\n")
+	fmt.Printf("  微信 / WeChat: youkpan\n")
+	fmt.Printf("  Website: https://zyinfo.pro\n")
+	fmt.Printf("======================================================\n\n")
+
 	if config.DeepSeekAPIKey == "" {
 		log.Fatal("DEEPSEEK_API_KEY is required")
 	}
@@ -175,21 +192,58 @@ func main() {
 	// Register API routes with CORS middleware
 	chatH := corsMiddleware(handler.ChatHandler(appCfg))
 	modelsH := corsMiddleware(handler.ModelsHandler(appCfg))
+	licenseH := corsMiddleware(licenseInfoHandler)
+
 	http.HandleFunc("/v1/chat/completions", chatH)
 	http.HandleFunc("/v1/models", modelsH)
 	http.HandleFunc("/chat/completions", chatH)
 	http.HandleFunc("/models", modelsH)
+	http.HandleFunc("/api/license/info", licenseH)
 
 	// Serve static files (NextChat frontend)
 	distDir := getDistDir()
 	log.Printf("[STATIC] serving from %s", distDir)
 	http.Handle("/", &spaFileHandler{root: http.Dir(distDir)})
 
+	// 创建 HTTP 服务器
+	srv := &http.Server{
+		Addr: fmt.Sprintf(":%s", config.Port),
+	}
+
+	// 启动定期许可证检查
+	go StartPeriodicLicenseCheck(srv)
+
 	addr := fmt.Sprintf(":%s", config.Port)
 	log.Printf("file-chat server starting on %s", addr)
 
-	// Auto-open browser
-	openBrowser(fmt.Sprintf("http://localhost:%s", config.Port))
+	// 延迟1分钟后显示过期日期（如果已获取授权）
+	go func() {
+		time.Sleep(1 * time.Minute)
+		expDate, _ := GetLicenseInfo()
+		if expDate != "" && expDate != "未授权" {
+			fmt.Printf("\n======================================================\n")
+			fmt.Printf("  授权信息 / License Information\n")
+			fmt.Printf("======================================================\n")
+			fmt.Printf("  授权到期 / Expiration Date: %s\n", expDate)
+			fmt.Printf("  硬件ID / Hardware ID: %s\n", hardwareID[:16])
+			fmt.Printf("======================================================\n\n")
+		}
+	}()
 
-	log.Fatal(http.ListenAndServe(addr, nil))
+	// Auto-open browser (打开两个URL)
+	go openBrowser(fmt.Sprintf("http://localhost:%s", config.Port))
+	go openBrowser("https://zyinfo.pro")
+
+	log.Fatal(srv.ListenAndServe())
+}
+
+// licenseInfoHandler 返回许可证信息
+func licenseInfoHandler(w http.ResponseWriter, r *http.Request) {
+	expDate, hardwareID := GetLicenseInfo()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"exp_date":   expDate,
+		"hardware_id": hardwareID,
+	})
 }
